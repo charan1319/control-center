@@ -161,8 +161,9 @@ export function listTmuxSessions() {
       { encoding: 'utf-8', timeout: TMUX_TIMEOUT_MS }
     );
     return output.trim().split('\n').filter(Boolean).map(line => {
-      const [name, cwd] = line.split('|');
-      return { name, cwd };
+      const idx = line.indexOf('|');
+      if (idx === -1) return { name: line, cwd: '' };
+      return { name: line.slice(0, idx), cwd: line.slice(idx + 1) };
     });
   } catch (err) {
     console.error(`[pty-manager] Failed to list tmux sessions: ${err.message}`);

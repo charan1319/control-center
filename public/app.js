@@ -75,6 +75,10 @@ function connectDashboardWS() {
       const idx = sessions.findIndex(s => s.session_id === msg.session.session_id);
       if (idx >= 0) sessions[idx] = msg.session;
       else sessions.unshift(msg.session);
+      // Keep terminal title in sync when the selected session is renamed
+      if (msg.session.session_id === selectedSessionId) {
+        terminalTitle.textContent = msg.session.label || msg.session.session_id.slice(0, 12);
+      }
       renderSessions();
       return;
     }
@@ -123,8 +127,9 @@ function renderSessions() {
     const detail = getDetailText(s);
     const isSelected = s.session_id === selectedSessionId;
 
+    const safeId = escapeHtml(s.session_id);
     return `
-      <div class="session-card ${isSelected ? 'selected' : ''}" data-id="${s.session_id}">
+      <div class="session-card ${isSelected ? 'selected' : ''}" data-id="${safeId}">
         <div class="card-header">
           <span class="indicator ${statusClass}"></span>
           <span class="card-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
@@ -133,9 +138,9 @@ function renderSessions() {
         ${detail ? `<div class="card-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</div>` : ''}
         <div class="card-actions">
           ${s.tmux_target
-            ? `<button class="btn-connect" data-id="${s.session_id}">Terminal</button>`
-            : `<button class="btn-link-tmux" data-id="${s.session_id}">Link tmux</button>`}
-          <button class="btn-edit-label" data-id="${s.session_id}">Rename</button>
+            ? `<button class="btn-connect" data-id="${safeId}">Terminal</button>`
+            : `<button class="btn-link-tmux" data-id="${safeId}">Link tmux</button>`}
+          <button class="btn-edit-label" data-id="${safeId}">Rename</button>
         </div>
       </div>
     `;
