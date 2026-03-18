@@ -3,7 +3,7 @@ import fastifyStatic from '@fastify/static';
 import fastifyWebSocket from '@fastify/websocket';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import config from './config.js';
 import * as db from './db.js';
 import * as ptyManager from './pty-manager.js';
@@ -265,9 +265,11 @@ export async function buildServer(opts = {}) {
       if (!/^[a-zA-Z0-9_-]+$/.test(target)) {
         return reply.status(400).send({ error: 'Invalid tmux target' });
       }
-      // Use load-buffer from stdin + paste-buffer to avoid any shell escaping issues
-      execSync(`tmux load-buffer -`, { input: text + '\n', timeout: 10_000 });
-      execSync(`tmux paste-buffer -t ${target}`, { timeout: 10_000 });
+      // Use a unique named buffer to avoid race conditions between concurrent requests.
+      // execFileSync bypasses the shell entirely — no injection possible.
+      const buf = `cc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: text + '\n', timeout: 10_000 });
+      execFileSync('tmux', ['paste-buffer', '-t', target, '-b', buf, '-d'], { timeout: 10_000 });
       return { success: true };
     } catch (err) {
       return reply.status(500).send({ error: err.message });

@@ -162,7 +162,7 @@ function renderSessions() {
       const current = sessions.find(s => s.session_id === sid)?.label || '';
       const newLabel = prompt('Session label:', current);
       if (newLabel !== null) {
-        fetchWithTimeout(`/api/sessions/${sid}`, {
+        fetchWithTimeout(`/api/sessions/${encodeURIComponent(sid)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label: newLabel }),
@@ -297,7 +297,7 @@ function openTerminal(sessionId) {
 
   // Connect WebSocket to terminal relay
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  termWs = new WebSocket(`${protocol}//${location.host}/ws/terminal/${sessionId}`);
+  termWs = new WebSocket(`${protocol}//${location.host}/ws/terminal/${encodeURIComponent(sessionId)}`);
 
   termWs.onmessage = (e) => {
     if (!term) return;
@@ -429,7 +429,7 @@ async function showLinkTmuxModal(sessionId) {
     tmuxSessionList.querySelectorAll('.tmux-option').forEach(opt => {
       opt.addEventListener('click', async () => {
         try {
-          const res = await fetchWithTimeout(`/api/sessions/${linkTargetSessionId}`, {
+          const res = await fetchWithTimeout(`/api/sessions/${encodeURIComponent(linkTargetSessionId)}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tmux_target: opt.dataset.name }),
