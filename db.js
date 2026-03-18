@@ -115,7 +115,7 @@ const stmts = {
     SELECT e.*, s.label, s.cwd AS session_cwd
     FROM events e
     LEFT JOIN sessions s ON e.session_id = s.session_id
-    ORDER BY e.created_at DESC
+    ORDER BY e.created_at DESC, e.id DESC
     LIMIT @limit
   `),
 

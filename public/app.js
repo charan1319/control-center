@@ -278,6 +278,7 @@ function openTerminal(sessionId) {
   termWs = new WebSocket(`${protocol}//${location.host}/ws/terminal/${sessionId}`);
 
   termWs.onmessage = (e) => {
+    if (!term) return;
     const msg = JSON.parse(e.data);
     if (msg.type === 'output') {
       term.write(msg.data);
@@ -339,6 +340,7 @@ document.getElementById('btn-cancel-modal').addEventListener('click', () => {
 
 // FIXED: Use button click handler instead of form submit to avoid dialog auto-close on validation failure
 document.getElementById('btn-launch').addEventListener('click', async () => {
+  const launchBtn = document.getElementById('btn-launch');
   const label = document.getElementById('ns-label').value.trim();
   const cwd = document.getElementById('ns-cwd').value.trim();
   const initialPrompt = document.getElementById('ns-prompt').value.trim();
@@ -348,6 +350,8 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
     return;
   }
 
+  launchBtn.disabled = true;
+  launchBtn.textContent = 'Launching...';
   try {
     const res = await fetch('/api/sessions/launch', {
       method: 'POST',
@@ -366,6 +370,9 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
     document.getElementById('ns-prompt').value = '';
   } catch (err) {
     alert(`Failed to launch: ${err.message}`);
+  } finally {
+    launchBtn.disabled = false;
+    launchBtn.textContent = 'Launch';
   }
 });
 
@@ -377,8 +384,14 @@ let linkTargetSessionId = null;
 
 async function showLinkTmuxModal(sessionId) {
   linkTargetSessionId = sessionId;
-  const res = await fetch('/api/tmux-sessions');
-  const tmuxSessions = await res.json();
+  let tmuxSessions;
+  try {
+    const res = await fetch('/api/tmux-sessions');
+    tmuxSessions = await res.json();
+  } catch {
+    alert('Failed to fetch tmux sessions. Is the server running?');
+    return;
+  }
 
   if (tmuxSessions.length === 0) {
     tmuxSessionList.innerHTML = '<div style="color: var(--text-muted); padding: 12px;">No tmux sessions found. Create one with: tmux new-session -d -s cc-0</div>';

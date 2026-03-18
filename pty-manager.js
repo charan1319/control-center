@@ -76,6 +76,7 @@ export function attach(tmuxTarget, socket) {
     });
 
     ptyProcess.onExit(({ exitCode }) => {
+      if (entry.graceTimer) clearTimeout(entry.graceTimer);
       activePTYs.delete(tmuxTarget);
       const exitMsg = JSON.stringify({ type: 'exit', code: exitCode });
       for (const client of entry.clients) {
