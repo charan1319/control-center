@@ -37,11 +37,29 @@
     <h2>New Session</h2>
     <div id="new-session-form">
       <label>Label<input type="text" id="ns-label" placeholder="e.g. frontend-fix" required></label>
-      <label>Working Directory<input type="text" id="ns-cwd" placeholder="/home/user/project"></label>
+      <label>Project (optional)<input type="text" id="ns-project" placeholder="e.g. my-app" list="ns-project-list"><datalist id="ns-project-list"></datalist></label>
+      <label>Working Directory
+        <select id="ns-cwd-preset">
+          <option value="">Loading projects…</option>
+        </select>
+        <input type="text" id="ns-cwd" placeholder="/path/to/project" class="hidden" style="margin-top:6px">
+      </label>
       <label>Initial Prompt (optional)<textarea id="ns-prompt" rows="3" placeholder="Fix the failing tests in src/auth/"></textarea></label>
       <div class="modal-actions">
         <button type="button" id="btn-cancel-modal">Cancel</button>
         <button type="button" id="btn-launch" class="primary">Launch</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="edit-session-modal">
+    <h2>Edit Session</h2>
+    <div>
+      <label>Label<input type="text" id="es-label" placeholder="e.g. frontend-fix"></label>
+      <label>Project<input type="text" id="es-project" placeholder="e.g. my-app (leave blank to ungroup)" list="es-project-list"><datalist id="es-project-list"></datalist></label>
+      <div class="modal-actions">
+        <button type="button" id="btn-cancel-edit">Cancel</button>
+        <button type="button" id="btn-save-edit" class="primary">Save</button>
       </div>
     </div>
   </dialog>

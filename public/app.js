@@ -21,6 +21,7 @@ const terminalTitle = document.getElementById('terminal-title');
 const terminalContainer = document.getElementById('terminal-container');
 const connectionStatus = document.getElementById('connection-status');
 const newSessionModal = document.getElementById('new-session-modal');
+const editSessionModal = document.getElementById('edit-session-modal');
 const linkTmuxModal = document.getElementById('link-tmux-modal');
 const tmuxSessionList = document.getElementById('tmux-session-list');
 
@@ -119,37 +120,66 @@ function connectDashboardWS() {
 // Render: Session cards
 // ──────────────────────────────────────────────
 
+function renderSessionCard(s) {
+  const label = s.label || s.session_id.slice(0, 12);
+  const statusClass = getStatusClass(s);
+  const statusText = getStatusText(s);
+  const detail = getDetailText(s);
+  const isSelected = s.session_id === selectedSessionId;
+  const safeId = escapeHtml(s.session_id);
+  const isStopped = s.status === 'stopped';
+  return `
+    <div class="session-card ${isSelected ? 'selected' : ''}" data-id="${safeId}">
+      <div class="card-header">
+        <span class="indicator ${statusClass}"></span>
+        <span class="card-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
+      </div>
+      <div class="card-status">${statusText}</div>
+      ${detail ? `<div class="card-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</div>` : ''}
+      <div class="card-actions">
+        ${s.tmux_target
+          ? `<button class="btn-connect" data-id="${safeId}">Terminal</button>`
+          : `<button class="btn-link-tmux" data-id="${safeId}">Link tmux</button>`}
+        <button class="btn-edit-session" data-id="${safeId}">Edit</button>
+        ${!isStopped ? `<button class="btn-kill-session" data-id="${safeId}">Kill</button>` : ''}
+      </div>
+    </div>
+  `;
+}
+
 function renderSessions() {
   if (sessions.length === 0) {
     sessionsGrid.innerHTML = '<div class="no-sessions">No sessions yet. Start Claude Code in a tmux pane, or click "+ New Session".</div>';
     return;
   }
 
-  sessionsGrid.innerHTML = sessions.map(s => {
-    const label = s.label || s.session_id.slice(0, 12);
-    const statusClass = getStatusClass(s);
-    const statusText = getStatusText(s);
-    const detail = getDetailText(s);
-    const isSelected = s.session_id === selectedSessionId;
+  // Group by project; sessions with no project go under '' (rendered ungrouped)
+  const byProject = {};
+  for (const s of sessions) {
+    const group = s.project || '';
+    if (!byProject[group]) byProject[group] = [];
+    byProject[group].push(s);
+  }
 
-    const safeId = escapeHtml(s.session_id);
-    return `
-      <div class="session-card ${isSelected ? 'selected' : ''}" data-id="${safeId}">
-        <div class="card-header">
-          <span class="indicator ${statusClass}"></span>
-          <span class="card-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
-        </div>
-        <div class="card-status">${statusText}</div>
-        ${detail ? `<div class="card-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</div>` : ''}
-        <div class="card-actions">
-          ${s.tmux_target
-            ? `<button class="btn-connect" data-id="${safeId}">Terminal</button>`
-            : `<button class="btn-link-tmux" data-id="${safeId}">Link tmux</button>`}
-          <button class="btn-edit-label" data-id="${safeId}">Rename</button>
-        </div>
-      </div>
-    `;
-  }).join('');
+  // Named projects alphabetically, ungrouped last
+  const groups = Object.keys(byProject).sort((a, b) => {
+    if (!a) return 1;
+    if (!b) return -1;
+    return a.localeCompare(b);
+  });
+
+  let html = '';
+  for (const group of groups) {
+    if (group) {
+      html += `<div class="project-group">
+        <div class="project-heading">${escapeHtml(group)}</div>
+        <div class="project-sessions">${byProject[group].map(renderSessionCard).join('')}</div>
+      </div>`;
+    } else {
+      html += `<div class="project-sessions">${byProject[group].map(renderSessionCard).join('')}</div>`;
+    }
+  }
+  sessionsGrid.innerHTML = html;
 
   // Attach click handlers
   sessionsGrid.querySelectorAll('.btn-connect').forEach(btn => {
@@ -160,21 +190,23 @@ function renderSessions() {
     btn.addEventListener('click', (e) => { e.stopPropagation(); showLinkTmuxModal(btn.dataset.id); });
   });
 
-  sessionsGrid.querySelectorAll('.btn-edit-label').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+  sessionsGrid.querySelectorAll('.btn-edit-session').forEach(btn => {
+    btn.addEventListener('click', (e) => { e.stopPropagation(); showEditSessionModal(btn.dataset.id); });
+  });
+
+  sessionsGrid.querySelectorAll('.btn-kill-session').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const sid = btn.dataset.id;
-      const current = sessions.find(s => s.session_id === sid)?.label || '';
-      const newLabel = prompt('Session label:', current);
-      if (newLabel !== null) {
-        fetchWithTimeout(`/api/sessions/${encodeURIComponent(sid)}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ label: newLabel }),
-        }).then(res => {
-          if (!res.ok) res.json().then(body => alert(`Rename failed: ${body.error || 'Unknown error'}`));
-        }).catch(() => alert('Rename failed: network error'));
-      }
+      const s = sessions.find(s => s.session_id === btn.dataset.id);
+      const name = s?.label || btn.dataset.id.slice(0, 8);
+      if (!confirm(`Kill session "${name}"? This will stop the tmux session.`)) return;
+      try {
+        const res = await fetchWithTimeout(`/api/sessions/${encodeURIComponent(btn.dataset.id)}/kill`, { method: 'POST' });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          alert(`Kill failed: ${body.error || 'Unknown error'}`);
+        }
+      } catch { alert('Kill failed: network error'); }
     });
   });
 
@@ -185,6 +217,46 @@ function renderSessions() {
     });
   });
 }
+
+// ──────────────────────────────────────────────
+// Edit session modal (label + project)
+// ──────────────────────────────────────────────
+
+let editTargetSessionId = null;
+
+function showEditSessionModal(sessionId) {
+  editTargetSessionId = sessionId;
+  const s = sessions.find(s => s.session_id === sessionId);
+  document.getElementById('es-label').value = s?.label || '';
+  document.getElementById('es-project').value = s?.project || '';
+
+  // Populate project datalist from known projects
+  const projects = [...new Set(sessions.map(s => s.project).filter(Boolean))];
+  document.getElementById('es-project-list').innerHTML = projects.map(p => `<option value="${escapeHtml(p)}">`).join('');
+
+  editSessionModal.showModal();
+}
+
+document.getElementById('btn-cancel-edit').addEventListener('click', () => editSessionModal.close());
+
+document.getElementById('btn-save-edit').addEventListener('click', async () => {
+  const label = document.getElementById('es-label').value.trim();
+  const project = document.getElementById('es-project').value.trim();
+  const sid = editTargetSessionId;
+  if (!sid) return;
+  editSessionModal.close();
+  try {
+    const res = await fetchWithTimeout(`/api/sessions/${encodeURIComponent(sid)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: label || undefined, project: project }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      alert(`Save failed: ${body.error || 'Unknown error'}`);
+    }
+  } catch { alert('Save failed: network error'); }
+});
 
 function getStatusClass(session) {
   if (session.status === 'waiting_permission') return 'waiting';
@@ -302,15 +374,30 @@ function openTerminal(sessionId) {
 
   term.open(terminalContainer);
 
-  // Small delay to ensure the container has dimensions before fitting
-  requestAnimationFrame(() => {
+  // Double rAF: the first rAF fires before the browser has finished laying out
+  // the newly-visible panel; the second fires after layout+paint, so the
+  // container has real pixel dimensions when fitAddon.fit() is called.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
     if (fitAddon) fitAddon.fit();
     if (term) term.focus();
-  });
+  }));
 
   // Connect WebSocket to terminal relay
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   termWs = new WebSocket(`${protocol}//${location.host}/ws/terminal/${encodeURIComponent(sessionId)}`);
+
+  termWs.onopen = () => {
+    // The initial fitAddon.fit() ran in rAF before the WebSocket was open,
+    // so any resize message was dropped. Use proposeDimensions() here instead
+    // of fit() — it returns the desired size without going through onResize,
+    // so we always send even if the dimensions haven't changed.
+    if (fitAddon && termWs?.readyState === 1) {
+      const dims = fitAddon.proposeDimensions();
+      if (dims) {
+        termWs.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+      }
+    }
+  };
 
   termWs.onmessage = (e) => {
     if (!term) return;
@@ -366,7 +453,39 @@ function handleWindowResize() {
 // New Session modal
 // ──────────────────────────────────────────────
 
-document.getElementById('btn-new-session').addEventListener('click', () => {
+const nsCwdPreset = document.getElementById('ns-cwd-preset');
+const nsCwdCustom = document.getElementById('ns-cwd');
+
+nsCwdPreset.addEventListener('change', () => {
+  if (nsCwdPreset.value === '__custom__') {
+    nsCwdCustom.classList.remove('hidden');
+    nsCwdCustom.focus();
+  } else {
+    nsCwdCustom.classList.add('hidden');
+    nsCwdCustom.value = '';
+  }
+});
+
+async function loadProjectPresets() {
+  try {
+    const res = await fetchWithTimeout('/api/projects');
+    const projects = await res.json();
+    nsCwdPreset.innerHTML = projects.map(p =>
+      `<option value="${escapeHtml(p.cwd)}">${escapeHtml(p.name)} — ${escapeHtml(p.cwd)}</option>`
+    ).join('') + '<option value="__custom__">Custom path…</option>';
+  } catch {
+    nsCwdPreset.innerHTML = '<option value="__custom__">Custom path…</option>';
+    nsCwdCustom.classList.remove('hidden');
+  }
+  // Reset custom input visibility
+  nsCwdCustom.classList.toggle('hidden', nsCwdPreset.value !== '__custom__');
+}
+
+document.getElementById('btn-new-session').addEventListener('click', async () => {
+  // Populate project datalist from known session projects
+  const knownProjects = [...new Set(sessions.map(s => s.project).filter(Boolean))];
+  document.getElementById('ns-project-list').innerHTML = knownProjects.map(p => `<option value="${escapeHtml(p)}">`).join('');
+  await loadProjectPresets();
   newSessionModal.showModal();
 });
 
@@ -378,7 +497,11 @@ document.getElementById('btn-cancel-modal').addEventListener('click', () => {
 document.getElementById('btn-launch').addEventListener('click', async () => {
   const launchBtn = document.getElementById('btn-launch');
   const label = document.getElementById('ns-label').value.trim();
-  const cwd = document.getElementById('ns-cwd').value.trim();
+  const project = document.getElementById('ns-project').value.trim();
+  const presetVal = document.getElementById('ns-cwd-preset').value;
+  const cwd = (presetVal === '__custom__' || !presetVal)
+    ? document.getElementById('ns-cwd').value.trim()
+    : presetVal;
   const initialPrompt = document.getElementById('ns-prompt').value.trim();
 
   if (!label) {
@@ -394,6 +517,7 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         label: label || undefined,
+        project: project || undefined,
         cwd: cwd || undefined,
         initialPrompt: initialPrompt || undefined,
       }),
@@ -402,7 +526,9 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
     newSessionModal.close();
     // Reset fields
     document.getElementById('ns-label').value = '';
+    document.getElementById('ns-project').value = '';
     document.getElementById('ns-cwd').value = '';
+    document.getElementById('ns-cwd-preset').selectedIndex = 0;
     document.getElementById('ns-prompt').value = '';
   } catch (err) {
     alert(`Failed to launch: ${err.message}`);
@@ -513,6 +639,18 @@ function escapeHtml(str) {
 // ──────────────────────────────────────────────
 
 setInterval(() => renderSessions(), 15_000);
+
+// ──────────────────────────────────────────────
+// Terminal scroll: intercept mouse wheel to scroll the xterm viewport
+// instead of forwarding events to the terminal app (which would send
+// cursor-up/down key presses into the running Claude Code session).
+// ──────────────────────────────────────────────
+
+terminalContainer.addEventListener('wheel', (e) => {
+  if (!term) return;
+  e.preventDefault();
+  term.scrollLines(e.deltaY > 0 ? 3 : -3);
+}, { passive: false });
 
 // ──────────────────────────────────────────────
 // Boot

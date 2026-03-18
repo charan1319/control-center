@@ -3,11 +3,18 @@ import fastifyStatic from '@fastify/static';
 import fastifyWebSocket from '@fastify/websocket';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 import config from './config.js';
 import * as db from './db.js';
 import * as ptyManager from './pty-manager.js';
 import * as notifier from './notifier.js';
+
+const PROJECTS_PATH = join(dirname(fileURLToPath(import.meta.url)), 'data', 'projects.json');
+
+function readProjects() {
+  try { return JSON.parse(readFileSync(PROJECTS_PATH, 'utf8')); } catch { return []; }
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -146,9 +153,12 @@ export async function buildServer(opts = {}) {
       const match = tmuxSessions.find(ts => ts.cwd === payload.cwd);
       if (match) {
         const pending = pendingLabels.get(match.name);
-        const pendingLabel = pending && (Date.now() - pending.createdAt < PENDING_LABEL_TTL_MS)
-          ? pending.label : undefined;
-        db.updateSession(session_id, { tmux_target: match.name, label: pendingLabel });
+        const validPending = pending && (Date.now() - pending.createdAt < PENDING_LABEL_TTL_MS);
+        db.updateSession(session_id, {
+          tmux_target: match.name,
+          label: validPending ? pending.label : undefined,
+          project: validPending ? pending.project : undefined,
+        });
         if (pending) pendingLabels.delete(match.name);
       }
     }
@@ -192,9 +202,16 @@ export async function buildServer(opts = {}) {
     });
     if (session) broadcastSessionUpdate(session);
 
-    // 6. Notify via OpenClaw for high-priority events
+    // 6. Notify via OpenClaw for high-priority events, but only if the session
+    // has been idle for 30+ seconds (skip when the user is actively watching).
     if (event === 'Stop' || event === 'PermissionRequest') {
-      notifier.send(payload).catch(() => {});
+      const lastHb = session?.last_heartbeat;
+      const msAgo = lastHb
+        ? Date.now() - new Date(lastHb.replace(' ', 'T') + 'Z').getTime()
+        : Infinity;
+      if (msAgo >= 30_000) {
+        notifier.send(payload).catch(() => {});
+      }
     }
 
     return reply.status(204).send();
@@ -213,16 +230,19 @@ export async function buildServer(opts = {}) {
   });
 
   fastify.patch('/api/sessions/:id', async (request, reply) => {
-    const { label, tmux_target } = request.body || {};
+    const { label, tmux_target, project } = request.body || {};
     if (label !== undefined && (typeof label !== 'string' || label.length > 256)) {
       return reply.status(400).send({ error: 'Label must be a string under 256 characters' });
     }
     if (tmux_target !== undefined && (typeof tmux_target !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(tmux_target))) {
       return reply.status(400).send({ error: 'Invalid tmux target name' });
     }
+    if (project !== undefined && (typeof project !== 'string' || project.length > 128)) {
+      return reply.status(400).send({ error: 'Project must be a string under 128 characters' });
+    }
     const session = db.getSession(request.params.id);
     if (!session) return reply.status(404).send({ error: 'Session not found' });
-    db.updateSession(request.params.id, { label, tmux_target });
+    db.updateSession(request.params.id, { label, tmux_target, project });
     const updated = db.getSession(request.params.id);
     broadcastSessionUpdate(updated);
     return updated;
@@ -233,7 +253,7 @@ export async function buildServer(opts = {}) {
   // ──────────────────────────────────────────────
 
   fastify.post('/api/sessions/launch', async (request, reply) => {
-    const { label, cwd, initialPrompt } = request.body || {};
+    const { label, cwd, initialPrompt, project } = request.body || {};
 
     // Input validation
     if (label && (typeof label !== 'string' || label.length > 256)) {
@@ -253,7 +273,7 @@ export async function buildServer(opts = {}) {
         initialPrompt,
       });
       // Store label so the SessionStart hook handler can apply it when auto-linking
-      if (label) pendingLabels.set(tmuxTarget, { label, createdAt: Date.now() });
+      if (label || project) pendingLabels.set(tmuxTarget, { label, project: project || undefined, createdAt: Date.now() });
       return { success: true, tmux_target: tmuxTarget, label };
     } catch (err) {
       return reply.status(500).send({ error: `Failed to create session: ${err.message}` });
@@ -293,6 +313,26 @@ export async function buildServer(opts = {}) {
   });
 
   // ──────────────────────────────────────────────
+  // REST: Kill a session (stops tmux + marks stopped)
+  // ──────────────────────────────────────────────
+
+  fastify.post('/api/sessions/:id/kill', async (request, reply) => {
+    const session = db.getSession(request.params.id);
+    if (!session) return reply.status(404).send({ error: 'Session not found' });
+
+    if (session.tmux_target) {
+      try {
+        execFileSync('tmux', ['kill-session', '-t', session.tmux_target], { timeout: 5_000 });
+      } catch { /* already gone — continue to update DB */ }
+    }
+
+    db.updateStatus(request.params.id, 'stopped');
+    const updated = db.getSession(request.params.id);
+    broadcastSessionUpdate(updated);
+    return reply.status(204).send();
+  });
+
+  // ──────────────────────────────────────────────
   // REST: Events
   // ──────────────────────────────────────────────
 
@@ -312,6 +352,24 @@ export async function buildServer(opts = {}) {
   // ──────────────────────────────────────────────
 
   fastify.get('/api/tmux-sessions', async () => ptyManager.listTmuxSessions());
+
+  // ──────────────────────────────────────────────
+  // REST: Project presets (machine-local, stored in data/projects.json)
+  // ──────────────────────────────────────────────
+
+  fastify.get('/api/projects', async () => readProjects());
+
+  fastify.put('/api/projects', async (request, reply) => {
+    const projects = request.body;
+    if (!Array.isArray(projects)) return reply.status(400).send({ error: 'Expected array' });
+    for (const p of projects) {
+      if (!p.name || typeof p.name !== 'string' || !p.cwd || typeof p.cwd !== 'string') {
+        return reply.status(400).send({ error: 'Each project needs name and cwd' });
+      }
+    }
+    writeFileSync(PROJECTS_PATH, JSON.stringify(projects, null, 2) + '\n');
+    return projects;
+  });
 
   // Periodically clean up stale pending labels (if SessionStart hook never fired)
   const labelCleanupTimer = setInterval(() => {

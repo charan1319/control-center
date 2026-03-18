@@ -23,7 +23,12 @@ db.exec(`
     label         TEXT,
     created_at    TEXT DEFAULT (datetime('now')),
     updated_at    TEXT DEFAULT (datetime('now'))
-  );
+  );`);
+
+// Safe migration — ALTER TABLE is ignored if the column already exists
+try { db.exec(`ALTER TABLE sessions ADD COLUMN project TEXT`); } catch { /* already exists */ }
+
+db.exec(`
 
   CREATE TABLE IF NOT EXISTS events (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,6 +91,7 @@ const stmts = {
     UPDATE sessions SET
       label = COALESCE(@label, label),
       tmux_target = COALESCE(@tmux_target, tmux_target),
+      project = COALESCE(@project, project),
       updated_at = datetime('now')
     WHERE session_id = @session_id
   `),
@@ -172,11 +178,12 @@ export function updateStatus(session_id, status) {
   return stmts.updateStatus.run({ session_id, status });
 }
 
-export function updateSession(session_id, { label, tmux_target }) {
+export function updateSession(session_id, { label, tmux_target, project }) {
   return stmts.updateSession.run({
     session_id,
     label: label ?? null,
     tmux_target: tmux_target ?? null,
+    project: project ?? null,
   });
 }
 

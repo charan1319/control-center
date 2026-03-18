@@ -16,10 +16,9 @@ const config = {
   ptyGracePeriodMs: 30_000,      // Keep PTY alive 30s after last client disconnects
   scrollbackBufferSize: 50_000,  // Characters of scrollback to replay on connect
 
-  // OpenClaw (optional — leave token empty to disable notifications)
-  openclawUrl: process.env.OPENCLAW_URL || 'http://127.0.0.1:18789/v1/responses',
-  openclawToken: process.env.OPENCLAW_TOKEN || '',
-  openclawAgent: process.env.OPENCLAW_AGENT || 'main',
+  // Notifications via OpenClaw → Telegram (leave either empty to disable)
+  openclawBin: process.env.OPENCLAW_BIN || '',
+  telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
 
   // tmux
   tmuxSessionPrefix: 'cc-',

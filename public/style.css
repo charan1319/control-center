@@ -62,6 +62,21 @@ button.primary:hover { opacity: 0.9; }
 
 #sessions-panel { padding: 16px 20px; }
 #sessions-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.project-group { display: flex; flex-direction: column; gap: 10px; }
+.project-heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 0 2px;
+}
+.project-sessions {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 12px;
@@ -90,8 +105,10 @@ button.primary:hover { opacity: 0.9; }
 .session-card .card-label { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .session-card .card-status { font-size: 12px; color: var(--text-secondary); }
 .session-card .card-detail { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.session-card .card-actions { margin-top: 8px; display: flex; gap: 6px; }
+.session-card .card-actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
 .session-card .card-actions button { font-size: 11px; padding: 3px 8px; }
+.session-card .btn-kill-session { color: var(--red); border-color: var(--red); }
+.session-card .btn-kill-session:hover { background: rgba(243, 139, 168, 0.15); }
 
 .no-sessions { color: var(--text-muted); font-size: 14px; text-align: center; padding: 40px 20px; }
 
@@ -113,7 +130,7 @@ button.primary:hover { opacity: 0.9; }
   font-size: 13px;
   font-family: var(--font-mono);
 }
-#terminal-container { height: 400px; padding: 4px; }
+#terminal-container { height: 600px; padding: 4px; }
 
 #events-panel { padding: 0 20px 20px; }
 #events-panel h2 { font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
@@ -161,7 +178,14 @@ dialog input, dialog textarea {
   background: var(--bg-surface); color: var(--text-primary);
   border: 1px solid var(--border); border-radius: 4px;
 }
-dialog input:focus, dialog textarea:focus { outline: none; border-color: var(--accent); }
+dialog input:focus, dialog textarea:focus, dialog select:focus { outline: none; border-color: var(--accent); }
+dialog select {
+  display: block; width: 100%; margin-top: 4px; padding: 8px 10px;
+  font-size: 13px; font-family: var(--font-sans);
+  background: var(--bg-surface); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
+}
+.hidden { display: none !important; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
 .tmux-option {
@@ -179,8 +203,8 @@ dialog input:focus, dialog textarea:focus { outline: none; border-color: var(--a
 
 /* FIXED: mobile grid reduced to 2 columns (time + event) for readability */
 @media (max-width: 640px) {
-  #sessions-grid { grid-template-columns: 1fr; }
-  #terminal-container { height: 280px; }
+  .project-sessions { grid-template-columns: 1fr; }
+  #terminal-container { height: 340px; }
   .event-row { grid-template-columns: 60px 1fr; }
   .event-row .ev-label { display: none; }
   .event-row .ev-detail { display: none; }
