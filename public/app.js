@@ -226,7 +226,7 @@ function renderEvents() {
       <div class="event-row ${isPermission ? 'permission-request' : ''}">
         <span class="ev-time">${timeStr}</span>
         <span class="ev-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
-        <span class="ev-event ${ev.event}">${ev.event}</span>
+        <span class="ev-event ${escapeHtml(ev.event)}">${escapeHtml(ev.event)}</span>
         <span class="ev-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</span>
       </div>
     `;
@@ -296,7 +296,8 @@ function openTerminal(sessionId) {
 
   termWs.onmessage = (e) => {
     if (!term) return;
-    const msg = JSON.parse(e.data);
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
     if (msg.type === 'output') {
       term.write(msg.data);
     } else if (msg.type === 'exit') {
