@@ -1,5 +1,5 @@
 import pty from 'node-pty';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import config from './config.js';
 
 // Map of tmux_target → { ptyProcess, clients: Set<WebSocket>, graceTimer, scrollback }
@@ -187,24 +187,25 @@ export function createTmuxSession({ label, cwd, initialPrompt }) {
   // Validate session name (should always pass since we generate it, but belt-and-suspenders)
   sanitizeTmuxTarget(sessionName);
 
-  // Build tmux new-session command with safe cwd handling
+  // Build tmux new-session command — execFileSync avoids shell entirely
   const args = ['new-session', '-d', '-s', sessionName];
   if (cwd) {
     args.push('-c', cwd);
   }
-  execSync(['tmux', ...args].map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' '), { timeout: TMUX_TIMEOUT_MS });
+  execFileSync('tmux', args, { timeout: TMUX_TIMEOUT_MS });
 
   // Start Claude Code in the session
-  execSync(`tmux send-keys -t ${sessionName} "claude" Enter`, { timeout: TMUX_TIMEOUT_MS });
+  execFileSync('tmux', ['send-keys', '-t', sessionName, 'claude', 'Enter'], { timeout: TMUX_TIMEOUT_MS });
 
   // If there's an initial prompt, wait for Claude Code TUI to initialize then send it.
   // Uses tmux send-keys -l (literal) to avoid shell metacharacter interpretation.
   if (initialPrompt) {
     setTimeout(() => {
       try {
-        // -l flag sends keys literally (no special key interpretation)
-        execSync(`tmux send-keys -t ${sessionName} -l ${JSON.stringify(initialPrompt)}`, { timeout: TMUX_TIMEOUT_MS });
-        execSync(`tmux send-keys -t ${sessionName} Enter`, { timeout: TMUX_TIMEOUT_MS });
+        // Use execFileSync to bypass shell — avoids injection via $(), backticks, etc.
+        // -l flag sends keys literally (no special tmux key interpretation)
+        execFileSync('tmux', ['send-keys', '-t', sessionName, '-l', initialPrompt], { timeout: TMUX_TIMEOUT_MS });
+        execFileSync('tmux', ['send-keys', '-t', sessionName, 'Enter'], { timeout: TMUX_TIMEOUT_MS });
       } catch (err) {
         console.error(`[pty-manager] Failed to send initial prompt to ${sessionName}: ${err.message}`);
       }
