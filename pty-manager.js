@@ -1,11 +1,11 @@
 import pty from 'node-pty';
-import { execSync, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import config from './config.js';
 
 // Map of tmux_target → { ptyProcess, clients: Set<WebSocket>, graceTimer, scrollback }
 const activePTYs = new Map();
 
-// Default timeout for all tmux execSync calls (10 seconds)
+// Default timeout for all tmux execFileSync calls (10 seconds)
 const TMUX_TIMEOUT_MS = 10_000;
 
 /**
@@ -26,7 +26,7 @@ function tmuxSessionExists(target) {
   sanitizeTmuxTarget(target);
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      execSync(`tmux has-session -t ${target} 2>/dev/null`, { timeout: TMUX_TIMEOUT_MS });
+      execFileSync('tmux', ['has-session', '-t', target], { timeout: TMUX_TIMEOUT_MS, stdio: 'ignore' });
       return true;
     } catch {
       if (attempt === 0) continue; // retry once
@@ -156,9 +156,9 @@ export function resize(tmuxTarget, cols, rows) {
  */
 export function listTmuxSessions() {
   try {
-    const output = execSync(
-      `tmux list-sessions -F '#{session_name}|#{pane_current_path}' 2>/dev/null`,
-      { encoding: 'utf-8', timeout: TMUX_TIMEOUT_MS }
+    const output = execFileSync(
+      'tmux', ['list-sessions', '-F', '#{session_name}|#{pane_current_path}'],
+      { encoding: 'utf-8', timeout: TMUX_TIMEOUT_MS, stdio: ['pipe', 'pipe', 'ignore'] }
     );
     return output.trim().split('\n').filter(Boolean).map(line => {
       const idx = line.indexOf('|');

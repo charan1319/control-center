@@ -293,6 +293,7 @@ function openTerminal(sessionId) {
   // Small delay to ensure the container has dimensions before fitting
   requestAnimationFrame(() => {
     if (fitAddon) fitAddon.fit();
+    if (term) term.focus();
   });
 
   // Connect WebSocket to terminal relay
