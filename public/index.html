@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Control Center</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header id="header">
+    <h1>⌘ Control Center</h1>
+    <div id="header-actions">
+      <span id="connection-status" class="status-dot disconnected" title="WebSocket disconnected"></span>
+      <button id="btn-new-session" title="Launch new Claude Code session">+ New Session</button>
+    </div>
+  </header>
+
+  <section id="sessions-panel">
+    <div id="sessions-grid"></div>
+  </section>
+
+  <section id="terminal-panel" class="hidden">
+    <div id="terminal-header">
+      <span id="terminal-title">No session selected</span>
+      <button id="btn-close-terminal" title="Close terminal">✕</button>
+    </div>
+    <div id="terminal-container"></div>
+  </section>
+
+  <section id="events-panel">
+    <h2>Activity Log</h2>
+    <div id="events-list"></div>
+  </section>
+
+  <dialog id="new-session-modal">
+    <h2>New Session</h2>
+    <div id="new-session-form">
+      <label>Label<input type="text" id="ns-label" placeholder="e.g. frontend-fix" required></label>
+      <label>Working Directory<input type="text" id="ns-cwd" placeholder="/home/user/project"></label>
+      <label>Initial Prompt (optional)<textarea id="ns-prompt" rows="3" placeholder="Fix the failing tests in src/auth/"></textarea></label>
+      <div class="modal-actions">
+        <button type="button" id="btn-cancel-modal">Cancel</button>
+        <button type="button" id="btn-launch" class="primary">Launch</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="link-tmux-modal">
+    <h2>Link tmux Session</h2>
+    <p>Select a tmux session to connect to this Claude Code session:</p>
+    <div id="tmux-session-list"></div>
+    <div class="modal-actions">
+      <button type="button" id="btn-cancel-link">Cancel</button>
+    </div>
+  </dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
