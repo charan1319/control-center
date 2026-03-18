@@ -161,7 +161,9 @@ function renderSessions() {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label: newLabel }),
-        });
+        }).then(res => {
+          if (!res.ok) res.json().then(body => alert(`Rename failed: ${body.error || 'Unknown error'}`));
+        }).catch(() => alert('Rename failed: network error'));
       }
     });
   });

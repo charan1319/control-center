@@ -30,6 +30,13 @@ export async function buildServer(opts = {}) {
   });
 
   // ──────────────────────────────────────────────
+  // Pending labels from /api/sessions/launch
+  // Maps tmux_target → label, consumed when SessionStart auto-links
+  // ──────────────────────────────────────────────
+
+  const pendingLabels = new Map();
+
+  // ──────────────────────────────────────────────
   // WebSocket: Dashboard event stream
   // ──────────────────────────────────────────────
 
@@ -122,11 +129,13 @@ export async function buildServer(opts = {}) {
         model: payload.model,
         transcript: payload.transcript_path,
       });
-      // Auto-link tmux target by matching cwd
+      // Auto-link tmux target by matching cwd, and apply any pending label from launch
       const tmuxSessions = ptyManager.listTmuxSessions();
       const match = tmuxSessions.find(ts => ts.cwd === payload.cwd);
       if (match) {
-        db.updateSession(session_id, { tmux_target: match.name });
+        const pendingLabel = pendingLabels.get(match.name);
+        db.updateSession(session_id, { tmux_target: match.name, label: pendingLabel });
+        if (pendingLabel) pendingLabels.delete(match.name);
       }
     }
 
@@ -227,6 +236,8 @@ export async function buildServer(opts = {}) {
         cwd: cwd || process.env.HOME,
         initialPrompt,
       });
+      // Store label so the SessionStart hook handler can apply it when auto-linking
+      if (label) pendingLabels.set(tmuxTarget, label);
       return { success: true, tmux_target: tmuxTarget, label };
     } catch (err) {
       return reply.status(500).send({ error: `Failed to create session: ${err.message}` });
