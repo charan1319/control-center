@@ -11,6 +11,17 @@ import * as notifier from './notifier.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+/**
+ * Parse a query param as an integer, clamped to [min, max].
+ * Returns defaultVal for missing, NaN, or out-of-range values.
+ */
+function clampInt(raw, defaultVal, min, max) {
+  if (raw == null) return defaultVal;
+  const n = parseInt(raw, 10);
+  if (isNaN(n)) return defaultVal;
+  return Math.max(min, Math.min(max, n));
+}
+
 // ──────────────────────────────────────────────
 // Build server (exported for tests)
 // ──────────────────────────────────────────────
@@ -34,7 +45,8 @@ export async function buildServer(opts = {}) {
   // Maps tmux_target → label, consumed when SessionStart auto-links
   // ──────────────────────────────────────────────
 
-  const pendingLabels = new Map();
+  const pendingLabels = new Map();     // tmux_target → { label, createdAt }
+  const PENDING_LABEL_TTL_MS = 60_000; // Auto-expire after 60s
 
   // ──────────────────────────────────────────────
   // WebSocket: Dashboard event stream
@@ -133,9 +145,11 @@ export async function buildServer(opts = {}) {
       const tmuxSessions = ptyManager.listTmuxSessions();
       const match = tmuxSessions.find(ts => ts.cwd === payload.cwd);
       if (match) {
-        const pendingLabel = pendingLabels.get(match.name);
+        const pending = pendingLabels.get(match.name);
+        const pendingLabel = pending && (Date.now() - pending.createdAt < PENDING_LABEL_TTL_MS)
+          ? pending.label : undefined;
         db.updateSession(session_id, { tmux_target: match.name, label: pendingLabel });
-        if (pendingLabel) pendingLabels.delete(match.name);
+        if (pending) pendingLabels.delete(match.name);
       }
     }
 
@@ -148,8 +162,10 @@ export async function buildServer(opts = {}) {
 
     // 3. Handle heartbeats (lightweight — skip event log)
     if (event === 'Heartbeat') {
-      // Ensure session exists even if we missed SessionStart (must come before heartbeat due to FK)
-      db.upsertSession({ session_id, cwd: null, model: null, transcript: null });
+      // Ensure session row exists for FK (uses INSERT ... ON CONFLICT DO NOTHING
+      // so it won't overwrite status on existing sessions — avoids resetting
+      // 'waiting_permission' back to 'active' if a late heartbeat arrives)
+      db.ensureSession(session_id);
       db.upsertHeartbeat({ session_id, tool_name: payload.tool_name });
       broadcastEvent({ event, session_id, tool_name: payload.tool_name, timestamp: payload.timestamp });
       return reply.status(204).send();
@@ -237,7 +253,7 @@ export async function buildServer(opts = {}) {
         initialPrompt,
       });
       // Store label so the SessionStart hook handler can apply it when auto-linking
-      if (label) pendingLabels.set(tmuxTarget, label);
+      if (label) pendingLabels.set(tmuxTarget, { label, createdAt: Date.now() });
       return { success: true, tmux_target: tmuxTarget, label };
     } catch (err) {
       return reply.status(500).send({ error: `Failed to create session: ${err.message}` });
@@ -281,13 +297,13 @@ export async function buildServer(opts = {}) {
   // ──────────────────────────────────────────────
 
   fastify.get('/api/sessions/:id/events', async (request) => {
-    const limit = parseInt(request.query.limit || '50', 10);
-    const offset = parseInt(request.query.offset || '0', 10);
+    const limit = clampInt(request.query.limit, 50, 1, 1000);
+    const offset = clampInt(request.query.offset, 0, 0, 100_000);
     return db.getSessionEvents(request.params.id, limit, offset);
   });
 
   fastify.get('/api/events', async (request) => {
-    const limit = parseInt(request.query.limit || '100', 10);
+    const limit = clampInt(request.query.limit, 100, 1, 1000);
     return db.getRecentEvents(limit);
   });
 
@@ -296,6 +312,15 @@ export async function buildServer(opts = {}) {
   // ──────────────────────────────────────────────
 
   fastify.get('/api/tmux-sessions', async () => ptyManager.listTmuxSessions());
+
+  // Periodically clean up stale pending labels (if SessionStart hook never fired)
+  const labelCleanupTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [target, entry] of pendingLabels) {
+      if (now - entry.createdAt > PENDING_LABEL_TTL_MS) pendingLabels.delete(target);
+    }
+  }, PENDING_LABEL_TTL_MS);
+  labelCleanupTimer.unref(); // don't keep process alive for cleanup
 
   return fastify;
 }

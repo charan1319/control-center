@@ -89,7 +89,12 @@ function connectDashboardWS() {
         if (s) {
           s.last_tool = msg.tool_name;
           s.last_heartbeat = msg.timestamp || new Date().toISOString();
-          s.status = 'active';
+          // Only set active if not waiting for permission — avoids flickering
+          // the status indicator when a late heartbeat from a previous tool
+          // arrives after a PermissionRequest event.
+          if (s.status !== 'waiting_permission') {
+            s.status = 'active';
+          }
           renderSessions();
         }
         return;
@@ -259,7 +264,13 @@ function getEventDetail(ev) {
 function openTerminal(sessionId) {
   selectedSessionId = sessionId;
   renderSessions();
-  closeTerminal(true); // Close existing but keep selectedSessionId
+
+  // Tear down existing terminal resources without hiding the panel
+  // (avoids a visual flicker from hide → immediate show)
+  window.removeEventListener('resize', handleWindowResize);
+  if (termWs) { try { termWs.close(); } catch {} termWs = null; }
+  if (term) { term.dispose(); term = null; }
+  fitAddon = null;
 
   const session = sessions.find(s => s.session_id === sessionId);
   terminalTitle.textContent = session?.label || sessionId.slice(0, 12);

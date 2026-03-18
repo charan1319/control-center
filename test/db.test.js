@@ -65,6 +65,25 @@ describe('db: sessions', () => {
     const s = db.getSession('nonexistent');
     assert.equal(s, undefined);
   });
+
+  it('ensureSession creates session without overwriting existing', () => {
+    // Create a session and set it to waiting_permission
+    db.upsertSession({ session_id: 'ensure-test', cwd: '/tmp', model: 'claude-sonnet-4-6', transcript: null });
+    db.updateStatus('ensure-test', 'waiting_permission');
+    assert.equal(db.getSession('ensure-test').status, 'waiting_permission');
+
+    // ensureSession should NOT overwrite the status
+    db.ensureSession('ensure-test');
+    assert.equal(db.getSession('ensure-test').status, 'waiting_permission');
+    assert.equal(db.getSession('ensure-test').cwd, '/tmp'); // preserved
+  });
+
+  it('ensureSession creates new session if it does not exist', () => {
+    db.ensureSession('ensure-new');
+    const s = db.getSession('ensure-new');
+    assert.ok(s);
+    assert.equal(s.status, 'active');
+  });
 });
 
 describe('db: events', () => {

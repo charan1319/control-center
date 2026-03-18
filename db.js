@@ -119,6 +119,14 @@ const stmts = {
     LIMIT @limit
   `),
 
+  // Insert session only if it doesn't already exist (used by heartbeat handler
+  // to satisfy FK without overwriting status on existing sessions)
+  ensureSession: db.prepare(`
+    INSERT INTO sessions (session_id, status, updated_at)
+    VALUES (@session_id, 'active', datetime('now'))
+    ON CONFLICT(session_id) DO NOTHING
+  `),
+
   // FIXED: added heartbeat join (was missing in original)
   getActiveSessions: db.prepare(`
     SELECT s.*, h.tool_name AS last_tool, h.last_seen AS last_heartbeat
@@ -185,6 +193,10 @@ export function getRecentEvents(limit = 100) {
 
 export function getActiveSessions() {
   return stmts.getActiveSessions.all();
+}
+
+export function ensureSession(session_id) {
+  return stmts.ensureSession.run({ session_id });
 }
 
 // ADDED: clean shutdown support
