@@ -5,6 +5,9 @@ import config from './config.js';
 // Map of tmux_target → { ptyProcess, clients: Set<WebSocket>, graceTimer, scrollback }
 const activePTYs = new Map();
 
+// Default timeout for all tmux execSync calls (10 seconds)
+const TMUX_TIMEOUT_MS = 10_000;
+
 /**
  * Validate and sanitize a tmux target name.
  * Rejects anything outside [a-zA-Z0-9_-] to prevent shell injection.
@@ -17,16 +20,20 @@ function sanitizeTmuxTarget(target) {
 }
 
 /**
- * Check if a tmux session exists.
+ * Check if a tmux session exists. Retries once on transient failure.
  */
 function tmuxSessionExists(target) {
-  try {
-    sanitizeTmuxTarget(target);
-    execSync(`tmux has-session -t ${target} 2>/dev/null`);
-    return true;
-  } catch {
-    return false;
+  sanitizeTmuxTarget(target);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      execSync(`tmux has-session -t ${target} 2>/dev/null`, { timeout: TMUX_TIMEOUT_MS });
+      return true;
+    } catch {
+      if (attempt === 0) continue; // retry once
+      return false;
+    }
   }
+  return false;
 }
 
 /**
@@ -45,14 +52,20 @@ export function attach(tmuxTarget, socket) {
   if (!entry) {
     // Spawn a new PTY bridged to the tmux session.
     // Target is already validated by tmuxSessionExists → sanitizeTmuxTarget above.
-    const ptyProcess = pty.spawn('/bin/bash', [
-      '-c', `exec tmux attach-session -t ${tmuxTarget}`
-    ], {
-      name: 'xterm-256color',
-      cols: 120,
-      rows: 40,
-      env: { ...process.env, TERM: 'xterm-256color' },
-    });
+    let ptyProcess;
+    try {
+      ptyProcess = pty.spawn('/bin/bash', [
+        '-c', `exec tmux attach-session -t ${tmuxTarget}`
+      ], {
+        name: 'xterm-256color',
+        cols: 120,
+        rows: 40,
+        env: { ...process.env, TERM: 'xterm-256color' },
+      });
+    } catch (err) {
+      console.error(`[pty-manager] Failed to spawn PTY for ${tmuxTarget}: ${err.message}`);
+      return null;
+    }
 
     entry = {
       ptyProcess,
@@ -145,13 +158,14 @@ export function listTmuxSessions() {
   try {
     const output = execSync(
       `tmux list-sessions -F '#{session_name}|#{pane_current_path}' 2>/dev/null`,
-      { encoding: 'utf-8' }
+      { encoding: 'utf-8', timeout: TMUX_TIMEOUT_MS }
     );
     return output.trim().split('\n').filter(Boolean).map(line => {
       const [name, cwd] = line.split('|');
       return { name, cwd };
     });
-  } catch {
+  } catch (err) {
+    console.error(`[pty-manager] Failed to list tmux sessions: ${err.message}`);
     return [];
   }
 }
@@ -178,10 +192,10 @@ export function createTmuxSession({ label, cwd, initialPrompt }) {
   if (cwd) {
     args.push('-c', cwd);
   }
-  execSync(['tmux', ...args].map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' '));
+  execSync(['tmux', ...args].map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' '), { timeout: TMUX_TIMEOUT_MS });
 
   // Start Claude Code in the session
-  execSync(`tmux send-keys -t ${sessionName} "claude" Enter`);
+  execSync(`tmux send-keys -t ${sessionName} "claude" Enter`, { timeout: TMUX_TIMEOUT_MS });
 
   // If there's an initial prompt, wait for Claude Code TUI to initialize then send it.
   // Uses tmux send-keys -l (literal) to avoid shell metacharacter interpretation.
@@ -189,8 +203,8 @@ export function createTmuxSession({ label, cwd, initialPrompt }) {
     setTimeout(() => {
       try {
         // -l flag sends keys literally (no special key interpretation)
-        execSync(`tmux send-keys -t ${sessionName} -l ${JSON.stringify(initialPrompt)}`);
-        execSync(`tmux send-keys -t ${sessionName} Enter`);
+        execSync(`tmux send-keys -t ${sessionName} -l ${JSON.stringify(initialPrompt)}`, { timeout: TMUX_TIMEOUT_MS });
+        execSync(`tmux send-keys -t ${sessionName} Enter`, { timeout: TMUX_TIMEOUT_MS });
       } catch (err) {
         console.error(`[pty-manager] Failed to send initial prompt to ${sessionName}: ${err.message}`);
       }

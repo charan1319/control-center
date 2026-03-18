@@ -139,9 +139,9 @@ export async function buildServer(opts = {}) {
 
     // 3. Handle heartbeats (lightweight — skip event log)
     if (event === 'Heartbeat') {
-      db.upsertHeartbeat({ session_id, tool_name: payload.tool_name });
-      // Ensure session exists even if we missed SessionStart
+      // Ensure session exists even if we missed SessionStart (must come before heartbeat due to FK)
       db.upsertSession({ session_id, cwd: null, model: null, transcript: null });
+      db.upsertHeartbeat({ session_id, tool_name: payload.tool_name });
       broadcastEvent({ event, session_id, tool_name: payload.tool_name, timestamp: payload.timestamp });
       return reply.status(204).send();
     }
@@ -189,6 +189,12 @@ export async function buildServer(opts = {}) {
 
   fastify.patch('/api/sessions/:id', async (request, reply) => {
     const { label, tmux_target } = request.body || {};
+    if (label !== undefined && (typeof label !== 'string' || label.length > 256)) {
+      return reply.status(400).send({ error: 'Label must be a string under 256 characters' });
+    }
+    if (tmux_target !== undefined && (typeof tmux_target !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(tmux_target))) {
+      return reply.status(400).send({ error: 'Invalid tmux target name' });
+    }
     const session = db.getSession(request.params.id);
     if (!session) return reply.status(404).send({ error: 'Session not found' });
     db.updateSession(request.params.id, { label, tmux_target });
@@ -203,6 +209,18 @@ export async function buildServer(opts = {}) {
 
   fastify.post('/api/sessions/launch', async (request, reply) => {
     const { label, cwd, initialPrompt } = request.body || {};
+
+    // Input validation
+    if (label && (typeof label !== 'string' || label.length > 256)) {
+      return reply.status(400).send({ error: 'Label must be a string under 256 characters' });
+    }
+    if (cwd && (typeof cwd !== 'string' || cwd.length > 1024)) {
+      return reply.status(400).send({ error: 'Working directory path too long' });
+    }
+    if (initialPrompt && (typeof initialPrompt !== 'string' || initialPrompt.length > 10_000)) {
+      return reply.status(400).send({ error: 'Initial prompt too long (max 10,000 characters)' });
+    }
+
     try {
       const tmuxTarget = ptyManager.createTmuxSession({
         label,
@@ -226,6 +244,9 @@ export async function buildServer(opts = {}) {
     if (!session?.tmux_target) return reply.status(400).send({ error: 'No tmux target linked' });
     const { text } = request.body || {};
     if (!text) return reply.status(400).send({ error: 'Missing text' });
+    if (typeof text !== 'string' || text.length > 1_000_000) {
+      return reply.status(400).send({ error: 'Text too large (max 1MB)' });
+    }
 
     try {
       const target = session.tmux_target;
@@ -234,8 +255,8 @@ export async function buildServer(opts = {}) {
         return reply.status(400).send({ error: 'Invalid tmux target' });
       }
       // Use load-buffer from stdin + paste-buffer to avoid any shell escaping issues
-      execSync(`tmux load-buffer -`, { input: text + '\n' });
-      execSync(`tmux paste-buffer -t ${target}`);
+      execSync(`tmux load-buffer -`, { input: text + '\n', timeout: 10_000 });
+      execSync(`tmux paste-buffer -t ${target}`, { timeout: 10_000 });
       return { success: true };
     } catch (err) {
       return reply.status(500).send({ error: err.message });

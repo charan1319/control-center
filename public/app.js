@@ -28,25 +28,40 @@ const tmuxSessionList = document.getElementById('tmux-session-list');
 // WebSocket — dashboard event stream
 // ──────────────────────────────────────────────
 
+let wsReconnectDelay = 1000;
+const WS_MAX_RECONNECT_DELAY = 30000;
+
 function connectDashboardWS() {
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+    return; // Already connecting/connected
+  }
+
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${protocol}//${location.host}/ws/events`);
 
   ws.onopen = () => {
     connectionStatus.className = 'status-dot connected';
     connectionStatus.title = 'Connected';
+    wsReconnectDelay = 1000; // Reset backoff on successful connect
   };
 
   ws.onclose = () => {
     connectionStatus.className = 'status-dot disconnected';
-    connectionStatus.title = 'Disconnected — reconnecting...';
-    setTimeout(connectDashboardWS, 3000);
+    connectionStatus.title = `Disconnected — reconnecting in ${Math.round(wsReconnectDelay / 1000)}s...`;
+    setTimeout(connectDashboardWS, wsReconnectDelay);
+    wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, WS_MAX_RECONNECT_DELAY);
   };
 
   ws.onerror = () => ws.close();
 
   ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
+    let msg;
+    try {
+      msg = JSON.parse(e.data);
+    } catch {
+      console.warn('Received malformed WebSocket message, skipping');
+      return;
+    }
 
     if (msg.type === 'init') {
       sessions = msg.sessions || [];
@@ -142,7 +157,7 @@ function renderSessions() {
       const current = sessions.find(s => s.session_id === sid)?.label || '';
       const newLabel = prompt('Session label:', current);
       if (newLabel !== null) {
-        fetch(`/api/sessions/${sid}`, {
+        fetchWithTimeout(`/api/sessions/${sid}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label: newLabel }),
@@ -353,7 +368,7 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
   launchBtn.disabled = true;
   launchBtn.textContent = 'Launching...';
   try {
-    const res = await fetch('/api/sessions/launch', {
+    const res = await fetchWithTimeout('/api/sessions/launch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -361,7 +376,7 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
         cwd: cwd || undefined,
         initialPrompt: initialPrompt || undefined,
       }),
-    });
+    }, 30000);
     if (!res.ok) throw new Error((await res.json()).error);
     newSessionModal.close();
     // Reset fields
@@ -386,7 +401,7 @@ async function showLinkTmuxModal(sessionId) {
   linkTargetSessionId = sessionId;
   let tmuxSessions;
   try {
-    const res = await fetch('/api/tmux-sessions');
+    const res = await fetchWithTimeout('/api/tmux-sessions');
     tmuxSessions = await res.json();
   } catch {
     alert('Failed to fetch tmux sessions. Is the server running?');
@@ -405,7 +420,7 @@ async function showLinkTmuxModal(sessionId) {
 
     tmuxSessionList.querySelectorAll('.tmux-option').forEach(opt => {
       opt.addEventListener('click', async () => {
-        await fetch(`/api/sessions/${linkTargetSessionId}`, {
+        await fetchWithTimeout(`/api/sessions/${linkTargetSessionId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tmux_target: opt.dataset.name }),
@@ -428,6 +443,19 @@ document.getElementById('btn-close-terminal').addEventListener('click', () => cl
 // ──────────────────────────────────────────────
 // Utilities
 // ──────────────────────────────────────────────
+
+/**
+ * Fetch with timeout. Throws on timeout or network failure.
+ */
+async function fetchWithTimeout(url, opts = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...opts, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function timeAgo(dateStr) {
   if (!dateStr) return '';
