@@ -681,14 +681,10 @@ describe('Integration: Query parameter validation', () => {
 // ──────────────────────────────────────────────
 // Integration: Heartbeat does not override waiting_permission
 // ──────────────────────────────────────────────
-describe('Integration: Heartbeat preserves waiting_permission', () => {
-  const sid = 'heartbeat-perm-test';
-
-  it('heartbeat after PermissionRequest keeps waiting_permission status', async () => {
-    // Start session
+describe('Integration: Heartbeat status transitions', () => {
+  it('heartbeat after PermissionRequest transitions to active (permission granted)', async () => {
+    const sid = 'heartbeat-perm-test';
     await injectHook({ event: 'SessionStart', session_id: sid, cwd: '/tmp/hp' });
-    let s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
-    assert.equal(s.status, 'active');
 
     // Permission request
     await injectHook({
@@ -697,19 +693,32 @@ describe('Integration: Heartbeat preserves waiting_permission', () => {
       tool_name: 'Bash',
       tool_input: { command: 'npm test' },
     });
-    s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
+    let s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
     assert.equal(s.status, 'waiting_permission');
 
-    // Simulate late heartbeat from a previous tool
+    // Heartbeat arrives → means permission was granted and tool ran
+    await injectHook({ event: 'Heartbeat', session_id: sid, tool_name: 'Bash' });
+    s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
+    assert.equal(s.status, 'active');
+    assert.equal(s.last_tool, 'Bash');
+  });
+
+  it('heartbeat does NOT revive stopped sessions', async () => {
+    const sid = 'heartbeat-stop-test';
+    await injectHook({ event: 'SessionStart', session_id: sid, cwd: '/tmp/hs' });
+    await injectHook({ event: 'Stop', session_id: sid });
+
+    let s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
+    assert.equal(s.status, 'stopped');
+
+    // Stale heartbeat arrives after session stopped → should stay stopped
     await injectHook({ event: 'Heartbeat', session_id: sid, tool_name: 'Write' });
-
-    // Status should still be waiting_permission
     s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
-    assert.equal(s.status, 'waiting_permission');
+    assert.equal(s.status, 'stopped');
     assert.equal(s.last_tool, 'Write'); // heartbeat data still updated
   });
 
-  it('heartbeat still creates session if it does not exist', async () => {
+  it('heartbeat creates session if it does not exist', async () => {
     const newSid = 'heartbeat-create-test';
     await injectHook({ event: 'Heartbeat', session_id: newSid, tool_name: 'Bash' });
 

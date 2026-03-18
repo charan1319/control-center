@@ -89,10 +89,10 @@ function connectDashboardWS() {
         if (s) {
           s.last_tool = msg.tool_name;
           s.last_heartbeat = msg.timestamp || new Date().toISOString();
-          // Only set active if not waiting for permission — avoids flickering
-          // the status indicator when a late heartbeat from a previous tool
-          // arrives after a PermissionRequest event.
-          if (s.status !== 'waiting_permission') {
+          // Set active unless session is stopped — a heartbeat means a tool ran,
+          // so permission was granted (clears waiting_permission). But don't
+          // revive stopped sessions from stale heartbeats.
+          if (s.status !== 'stopped') {
             s.status = 'active';
           }
           renderSessions();
@@ -228,7 +228,8 @@ function renderEvents() {
   eventsList.innerHTML = recentEvents.slice(0, 100).map(ev => {
     const time = ev.created_at || ev.timestamp || '';
     const timeStr = time ? formatTime(time) : '--:--';
-    const label = ev.label || ev.session_cwd || ev.session_id?.slice(0, 8) || '?';
+    // session_cwd comes from init (DB JOIN alias), cwd from broadcast events
+    const label = ev.label || ev.session_cwd || ev.cwd || ev.session_id?.slice(0, 8) || '?';
     const detail = getEventDetail(ev);
     const isPermission = ev.event === 'PermissionRequest';
 
