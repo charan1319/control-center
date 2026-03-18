@@ -420,11 +420,16 @@ async function showLinkTmuxModal(sessionId) {
 
     tmuxSessionList.querySelectorAll('.tmux-option').forEach(opt => {
       opt.addEventListener('click', async () => {
-        await fetchWithTimeout(`/api/sessions/${linkTargetSessionId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tmux_target: opt.dataset.name }),
-        });
+        try {
+          const res = await fetchWithTimeout(`/api/sessions/${linkTargetSessionId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tmux_target: opt.dataset.name }),
+          });
+          if (!res.ok) throw new Error((await res.json()).error);
+        } catch (err) {
+          alert(`Failed to link tmux session: ${err.message}`);
+        }
         linkTmuxModal.close();
       });
     });
@@ -461,6 +466,7 @@ function timeAgo(dateStr) {
   if (!dateStr) return '';
   const d = dateStr.includes('T') ? new Date(dateStr) : new Date(dateStr + 'Z');
   const seconds = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (isNaN(seconds)) return '';
   if (seconds < 5) return 'just now';
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);
