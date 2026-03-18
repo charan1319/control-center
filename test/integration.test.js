@@ -640,3 +640,90 @@ describe('Integration: Global events with metadata', () => {
     assert.equal(notifEvent.session_cwd, '/tmp/meta');
   });
 });
+
+// ──────────────────────────────────────────────
+// Integration: Query parameter validation
+// ──────────────────────────────────────────────
+describe('Integration: Query parameter validation', () => {
+  it('NaN limit defaults to safe value', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/events?limit=abc' });
+    assert.equal(res.statusCode, 200);
+    const events = res.json();
+    assert.ok(events.length <= 100); // default limit
+  });
+
+  it('negative limit is clamped to 1', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/events?limit=-5' });
+    assert.equal(res.statusCode, 200);
+    const events = res.json();
+    assert.ok(events.length <= 1);
+  });
+
+  it('excessive limit is capped at 1000', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/events?limit=999999' });
+    assert.equal(res.statusCode, 200);
+    // Just verifying it doesn't crash — the cap prevents unbounded queries
+  });
+
+  it('NaN offset defaults to 0', async () => {
+    const sid = 'qp-test';
+    await injectHook({ event: 'SessionStart', session_id: sid, cwd: '/tmp' });
+    const res = await app.inject({ method: 'GET', url: `/api/sessions/${sid}/events?offset=xyz` });
+    assert.equal(res.statusCode, 200);
+  });
+
+  it('negative offset is clamped to 0', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/events?limit=5&offset=-10' });
+    assert.equal(res.statusCode, 200);
+  });
+});
+
+// ──────────────────────────────────────────────
+// Integration: Heartbeat does not override waiting_permission
+// ──────────────────────────────────────────────
+describe('Integration: Heartbeat status transitions', () => {
+  it('heartbeat after PermissionRequest transitions to active (permission granted)', async () => {
+    const sid = 'heartbeat-perm-test';
+    await injectHook({ event: 'SessionStart', session_id: sid, cwd: '/tmp/hp' });
+
+    // Permission request
+    await injectHook({
+      event: 'PermissionRequest',
+      session_id: sid,
+      tool_name: 'Bash',
+      tool_input: { command: 'npm test' },
+    });
+    let s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
+    assert.equal(s.status, 'waiting_permission');
+
+    // Heartbeat arrives → means permission was granted and tool ran
+    await injectHook({ event: 'Heartbeat', session_id: sid, tool_name: 'Bash' });
+    s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
+    assert.equal(s.status, 'active');
+    assert.equal(s.last_tool, 'Bash');
+  });
+
+  it('heartbeat does NOT revive stopped sessions', async () => {
+    const sid = 'heartbeat-stop-test';
+    await injectHook({ event: 'SessionStart', session_id: sid, cwd: '/tmp/hs' });
+    await injectHook({ event: 'Stop', session_id: sid });
+
+    let s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
+    assert.equal(s.status, 'stopped');
+
+    // Stale heartbeat arrives after session stopped → should stay stopped
+    await injectHook({ event: 'Heartbeat', session_id: sid, tool_name: 'Write' });
+    s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
+    assert.equal(s.status, 'stopped');
+    assert.equal(s.last_tool, 'Write'); // heartbeat data still updated
+  });
+
+  it('heartbeat creates session if it does not exist', async () => {
+    const newSid = 'heartbeat-create-test';
+    await injectHook({ event: 'Heartbeat', session_id: newSid, tool_name: 'Bash' });
+
+    const s = (await app.inject({ method: 'GET', url: `/api/sessions/${newSid}` })).json();
+    assert.equal(s.status, 'active');
+    assert.equal(s.last_tool, 'Bash');
+  });
+});

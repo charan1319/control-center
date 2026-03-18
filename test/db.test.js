@@ -65,6 +65,34 @@ describe('db: sessions', () => {
     const s = db.getSession('nonexistent');
     assert.equal(s, undefined);
   });
+
+  it('ensureSession transitions waiting_permission to active (permission was granted)', () => {
+    db.upsertSession({ session_id: 'ensure-test', cwd: '/tmp', model: 'claude-sonnet-4-6', transcript: null });
+    db.updateStatus('ensure-test', 'waiting_permission');
+    assert.equal(db.getSession('ensure-test').status, 'waiting_permission');
+
+    // Heartbeat arrives → permission was granted → should set active
+    db.ensureSession('ensure-test');
+    assert.equal(db.getSession('ensure-test').status, 'active');
+    assert.equal(db.getSession('ensure-test').cwd, '/tmp'); // preserved
+  });
+
+  it('ensureSession does NOT revive stopped sessions', () => {
+    db.upsertSession({ session_id: 'ensure-stopped', cwd: '/tmp', model: 'opus', transcript: null });
+    db.updateStatus('ensure-stopped', 'stopped');
+    assert.equal(db.getSession('ensure-stopped').status, 'stopped');
+
+    // Stale heartbeat arrives after session stopped → should stay stopped
+    db.ensureSession('ensure-stopped');
+    assert.equal(db.getSession('ensure-stopped').status, 'stopped');
+  });
+
+  it('ensureSession creates new session if it does not exist', () => {
+    db.ensureSession('ensure-new');
+    const s = db.getSession('ensure-new');
+    assert.ok(s);
+    assert.equal(s.status, 'active');
+  });
 });
 
 describe('db: events', () => {

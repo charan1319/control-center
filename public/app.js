@@ -89,7 +89,12 @@ function connectDashboardWS() {
         if (s) {
           s.last_tool = msg.tool_name;
           s.last_heartbeat = msg.timestamp || new Date().toISOString();
-          s.status = 'active';
+          // Set active unless session is stopped — a heartbeat means a tool ran,
+          // so permission was granted (clears waiting_permission). But don't
+          // revive stopped sessions from stale heartbeats.
+          if (s.status !== 'stopped') {
+            s.status = 'active';
+          }
           renderSessions();
         }
         return;
@@ -223,7 +228,8 @@ function renderEvents() {
   eventsList.innerHTML = recentEvents.slice(0, 100).map(ev => {
     const time = ev.created_at || ev.timestamp || '';
     const timeStr = time ? formatTime(time) : '--:--';
-    const label = ev.label || ev.session_cwd || ev.session_id?.slice(0, 8) || '?';
+    // session_cwd comes from init (DB JOIN alias), cwd from broadcast events
+    const label = ev.label || ev.session_cwd || ev.cwd || ev.session_id?.slice(0, 8) || '?';
     const detail = getEventDetail(ev);
     const isPermission = ev.event === 'PermissionRequest';
 
@@ -259,7 +265,13 @@ function getEventDetail(ev) {
 function openTerminal(sessionId) {
   selectedSessionId = sessionId;
   renderSessions();
-  closeTerminal(true); // Close existing but keep selectedSessionId
+
+  // Tear down existing terminal resources without hiding the panel
+  // (avoids a visual flicker from hide → immediate show)
+  window.removeEventListener('resize', handleWindowResize);
+  if (termWs) { try { termWs.close(); } catch {} termWs = null; }
+  if (term) { term.dispose(); term = null; }
+  fitAddon = null;
 
   const session = sessions.find(s => s.session_id === sessionId);
   terminalTitle.textContent = session?.label || sessionId.slice(0, 12);
