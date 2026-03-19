@@ -61,6 +61,11 @@ db.exec(`
     auth        TEXT NOT NULL,
     created_at  TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS stats (
+    key   TEXT PRIMARY KEY,
+    value REAL NOT NULL DEFAULT 0
+  );
 `);
 
 // ──────────────────────────────────────────────
@@ -271,7 +276,53 @@ export function deletePushSubscription(endpoint) {
   return pushStmts.delete.run({ endpoint });
 }
 
-// ADDED: clean shutdown support
+// ── Usage stats ──────────────────────────────────
+// DeepSeek pricing (deepseek-chat, as of 2025): $0.27/M input, $1.10/M output
+const DEEPSEEK_COST_INPUT_PER_M = 0.27;
+const DEEPSEEK_COST_OUTPUT_PER_M = 1.10;
+
+const statsStmts = {
+  increment: db.prepare(`
+    INSERT INTO stats (key, value) VALUES (@key, @delta)
+    ON CONFLICT(key) DO UPDATE SET value = value + @delta
+  `),
+  getAll: db.prepare(`SELECT key, value FROM stats`),
+  totalSessions: db.prepare(`SELECT COUNT(*) as n FROM sessions`),
+  sessionsThisWeek: db.prepare(`SELECT COUNT(*) as n FROM sessions WHERE created_at > datetime('now', '-7 days')`),
+  totalEvents: db.prepare(`SELECT COUNT(*) as n FROM events`),
+  mostUsedTool: db.prepare(`
+    SELECT tool_name, COUNT(*) as n FROM events
+    WHERE tool_name IS NOT NULL AND tool_name != ''
+    GROUP BY tool_name ORDER BY n DESC LIMIT 1
+  `),
+  avgDuration: db.prepare(`
+    SELECT AVG((julianday(updated_at) - julianday(created_at)) * 1440) as avg_min
+    FROM sessions WHERE status = 'stopped'
+  `),
+};
+
+export function incrementStat(key, delta = 1) {
+  statsStmts.increment.run({ key, delta });
+}
+
+export function getStats() {
+  const allStats = Object.fromEntries(statsStmts.getAll.all().map(r => [r.key, r.value]));
+  const promptTokens = allStats['ai_prompt_tokens'] ?? 0;
+  const completionTokens = allStats['ai_completion_tokens'] ?? 0;
+  const costUsd = (promptTokens * DEEPSEEK_COST_INPUT_PER_M + completionTokens * DEEPSEEK_COST_OUTPUT_PER_M) / 1_000_000;
+  const avgRow = statsStmts.avgDuration.get();
+  return {
+    totalSessions: statsStmts.totalSessions.get().n,
+    sessionsThisWeek: statsStmts.sessionsThisWeek.get().n,
+    totalEvents: statsStmts.totalEvents.get().n,
+    mostUsedTool: statsStmts.mostUsedTool.get()?.tool_name ?? null,
+    avgDurationMinutes: avgRow?.avg_min ? Math.round(avgRow.avg_min) : null,
+    aiSummaryCalls: Math.round(allStats['ai_summary_calls'] ?? 0),
+    aiCostUsd: costUsd,
+  };
+}
+
+// ── Shutdown ──────────────────────────────────────
 export function close() {
   db.close();
 }

@@ -27,6 +27,7 @@
     <div id="header-actions">
       <span id="connection-status" class="status-dot disconnected" title="WebSocket disconnected"></span>
       <button id="btn-notifications" title="Enable push notifications" class="btn-notif" aria-label="Notifications">🔔</button>
+      <button id="btn-cleanup-zombies" title="Mark stale sessions (no active tmux, heartbeat > 4h ago) as stopped">🧹</button>
       <button id="btn-new-session" title="Launch new Claude Code session">+ New Session</button>
     </div>
   </header>
@@ -34,6 +35,7 @@
   <main id="main-layout">
     <section id="sessions-panel">
       <div id="summary-bar"></div>
+      <div id="stats-bar"></div>
       <div id="sessions-grid"></div>
       <section id="events-panel">
         <h2>Activity Log</h2>

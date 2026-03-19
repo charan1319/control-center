@@ -5,10 +5,10 @@ Keep this file updated as the project evolves.
 
 ---
 
-## Current Status (2026-03-18)
+## Current Status (2026-03-19)
 
-The core product is complete and in daily use. The server runs manually in a tmux pane
-(`npm start` from `/home/zapperz/Charan/control-center`). All 84 tests pass.
+The core product is complete and in daily use. Systemd service runs automatically on WSL boot.
+All 92 tests pass.
 
 ### What's working
 
@@ -45,9 +45,21 @@ The core product is complete and in daily use. The server runs manually in a tmu
   user services (control-center + openclaw) silently at login. Windows auto-login configured via
   `netplwiz` so the full chain runs on power-cycle with no manual intervention.
 
-- [ ] **Session cleanup** — stopped sessions accumulate in the DB indefinitely.
-  Options: auto-delete after N days, or a manual "Clear all stopped" button in the UI.
-  The stopped sessions section is already collapsed, so it's not urgent.
+- [x] **Session cleanup** — 7-day auto-delete of stopped sessions runs on startup and daily.
+  The "🧹" button in the header triggers `POST /api/sessions/cleanup-zombies` which marks stale
+  active sessions (tmux gone + heartbeat > 4h) as stopped immediately.
+
+- [x] **Rate limiting on hook endpoint** — 120 req/min per IP, 64KB body limit, no external dep.
+
+- [x] **Usage analytics** — `GET /api/stats` endpoint + stats bar in UI (sessions/week, tool uses,
+  top tool, avg duration, AI calls + cost).
+
+- [x] **AI summaries** — enabled by default (requires `DEEPSEEK_API_KEY`). Improved prompt with
+  richer tool context (bash commands, file paths, result snippets). Token usage tracked in DB
+  and displayed in the stats bar. DeepSeek pricing: $0.27/M input, $1.10/M output.
+
+- [x] **Installer** — `install.sh` handles clone, npm install, .env creation, hook deployment,
+  settings.json update, and systemd/launchd service setup.
 
 - [ ] **Auth** — the HTTP API is completely open. Fine for Tailscale-only access, but worth
   adding a simple shared secret header check (`X-CC-Token`) before exposing more broadly.

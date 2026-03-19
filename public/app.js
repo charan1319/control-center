@@ -21,12 +21,14 @@ let historyLastFailTime = 0; // timestamp of last failed auto-fetch (for cooldow
 let serverInfo = { serverCwd: null };
 let previewCache = new Map();  // session_id → { text, fetchedAt }
 let summaryCache = new Map();  // session_id → { summary, fetchedAt }
+let stats = null;
 
 // ──────────────────────────────────────────────
 // DOM references
 // ──────────────────────────────────────────────
 
 const summaryBar = document.getElementById('summary-bar');
+const statsBar = document.getElementById('stats-bar');
 const sessionsGrid = document.getElementById('sessions-grid');
 const eventsList = document.getElementById('events-list');
 const terminalPanel = document.getElementById('terminal-panel');
@@ -82,9 +84,9 @@ function connectDashboardWS() {
       recentEvents = msg.recentEvents || [];
       renderSessions();
       renderEvents();
-      // Fetch previews and summaries on initial load
       refreshPreviews();
       refreshSummaries();
+      refreshStats();
       return;
     }
 
@@ -117,13 +119,21 @@ function connectDashboardWS() {
         return;
       }
 
+      // For non-auto-approved PermissionRequest: update status immediately so
+      // the card turns red without waiting for the session_update broadcast.
+      // The session_update that follows confirms/corrects the status.
+      // Auto-approved permissions include auto_approved:true — skip those.
+      if (msg.event === 'PermissionRequest' && !msg.auto_approved) {
+        const s = sessions.find(s => s.session_id === msg.session_id);
+        if (s && s.status !== 'stopped') {
+          s.status = 'waiting_permission';
+          scheduleRenderSessions();
+        }
+      }
+
       recentEvents.unshift(msg);
       if (recentEvents.length > 200) recentEvents.length = 200;
       scheduleRenderEvents();
-      // Do NOT update session.status here — the server always follows up with a
-      // session_update message that carries the authoritative DB status.
-      // Mutating status client-side from event names caused wrong border colors
-      // (e.g. Stop was setting 'stopped' even though the server now sets 'active').
     }
   };
 }
@@ -728,6 +738,25 @@ async function loadProjectPresets() {
   // Reset custom input visibility
   nsCwdCustom.classList.toggle('hidden', nsCwdPreset.value !== '__custom__');
 }
+
+document.getElementById('btn-cleanup-zombies').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-cleanup-zombies');
+  btn.disabled = true;
+  try {
+    const res = await fetchWithTimeout('/api/sessions/cleanup-zombies', { method: 'POST' });
+    if (res.ok) {
+      const { cleaned } = await res.json();
+      refreshStats();
+      if (cleaned === 0) {
+        btn.title = 'No stale sessions found';
+      } else {
+        btn.title = `Cleaned up ${cleaned} session${cleaned !== 1 ? 's' : ''}`;
+      }
+    }
+  } catch { /* ignore */ } finally {
+    btn.disabled = false;
+  }
+});
 
 document.getElementById('btn-new-session').addEventListener('click', async () => {
   await Promise.all([loadProjectPresets(), loadTemplates()]).catch(() => {});
@@ -1337,6 +1366,43 @@ async function refreshPreviews() {
   scheduleRenderSessions();
 }
 
+function renderStats() {
+  if (!stats) { statsBar.classList.add('hidden'); return; }
+  const { sessionsThisWeek, totalEvents, mostUsedTool, avgDurationMinutes, aiSummaryCalls, aiCostUsd } = stats;
+  const parts = [
+    `<span class="stat-chip">${sessionsThisWeek} session${sessionsThisWeek !== 1 ? 's' : ''} this week</span>`,
+    `<span class="stat-sep">·</span>`,
+    `<span class="stat-chip">${totalEvents.toLocaleString()} tool uses</span>`,
+  ];
+  if (mostUsedTool) {
+    parts.push(`<span class="stat-sep">·</span>`);
+    parts.push(`<span class="stat-chip">Top: ${escapeHtml(mostUsedTool)}</span>`);
+  }
+  if (avgDurationMinutes !== null) {
+    const avgLabel = avgDurationMinutes >= 60
+      ? `${Math.round(avgDurationMinutes / 60)}h avg`
+      : `${avgDurationMinutes}m avg`;
+    parts.push(`<span class="stat-sep">·</span>`);
+    parts.push(`<span class="stat-chip">${avgLabel}</span>`);
+  }
+  if (aiSummaryCalls > 0) {
+    const costLabel = aiCostUsd < 0.005 ? '<$0.01' : `$${aiCostUsd.toFixed(2)}`;
+    parts.push(`<span class="stat-sep">·</span>`);
+    parts.push(`<span class="stat-chip stat-ai">AI: ${aiSummaryCalls} calls · ~${costLabel}</span>`);
+  }
+  statsBar.innerHTML = parts.join('');
+  statsBar.classList.remove('hidden');
+}
+
+async function refreshStats() {
+  try {
+    const res = await fetchWithTimeout('/api/stats');
+    if (!res.ok) return;
+    stats = await res.json();
+    renderStats();
+  } catch { /* non-critical */ }
+}
+
 async function refreshSummaries() {
   if (!serverInfo.aiSummaryEnabled) return;
   const active = sessions.filter(s => s.status !== 'stopped');
@@ -1361,9 +1427,10 @@ async function refreshSummaries() {
 fetchServerInfo();
 connectDashboardWS();
 
-// Refresh previews every 20s, summaries every 90s
+// Refresh previews every 20s, summaries every 90s, stats every 60s
 setInterval(refreshPreviews, 20_000);
 setInterval(refreshSummaries, 90_000);
+setInterval(refreshStats, 60_000);
 
 // ──────────────────────────────────────────────
 // PWA: service worker + push notifications

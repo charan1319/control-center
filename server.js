@@ -4,13 +4,14 @@ import fastifyWebSocket from '@fastify/websocket';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, basename } from 'node:path';
 import { hostname } from 'node:os';
-import { execFileSync, execSync } from 'node:child_process';
-import { readFileSync, writeFileSync, openSync, closeSync, readSync, fstatSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 import webpush from 'web-push';
 import config from './config.js';
 import * as db from './db.js';
 import * as ptyManager from './pty-manager.js';
 import * as notifier from './notifier.js';
+import { readTranscriptTail, getLastAssistantText } from './transcript.js';
 
 // Configure web-push VAPID keys (no-op if keys not set)
 if (config.pushEnabled) {
@@ -38,48 +39,7 @@ async function sendPushNotification(title, body, tag = 'cc', url = '/') {
 const PROJECTS_PATH = join(dirname(fileURLToPath(import.meta.url)), 'data', 'projects.json');
 const TEMPLATES_PATH = join(dirname(fileURLToPath(import.meta.url)), 'data', 'templates.json');
 
-// ──────────────────────────────────────────────
-// Transcript helpers
-// ──────────────────────────────────────────────
-
-function readTranscriptTail(filePath, maxBytes = 32768) {
-  const turns = [];
-  try {
-    const fd = openSync(filePath, 'r');
-    try {
-      const { size } = fstatSync(fd);
-      if (size === 0) return turns;
-      const readSize = Math.min(maxBytes, size);
-      const buf = Buffer.allocUnsafe(readSize);
-      readSync(fd, buf, 0, readSize, size - readSize);
-      const lines = buf.toString('utf8').split('\n');
-      const startIdx = size > maxBytes ? 1 : 0; // skip potentially incomplete first line
-      for (let i = startIdx; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-        try {
-          const obj = JSON.parse(line);
-          if (obj.type === 'user' || obj.type === 'assistant') turns.push(obj);
-        } catch { /* malformed line */ }
-      }
-    } finally {
-      closeSync(fd);
-    }
-  } catch { /* file may not exist yet */ }
-  return turns;
-}
-
-function getLastAssistantText(filePath) {
-  const turns = readTranscriptTail(filePath, 16384);
-  for (let i = turns.length - 1; i >= 0; i--) {
-    if (turns[i].type !== 'assistant') continue;
-    const content = turns[i].message?.content;
-    if (!Array.isArray(content)) continue;
-    const textBlock = content.find(b => b.type === 'text');
-    if (textBlock?.text?.trim()) return textBlock.text.trim().slice(0, 300);
-  }
-  return null;
-}
+// readTranscriptTail and getLastAssistantText are imported from transcript.js
 
 // ──────────────────────────────────────────────
 // AI summary (DeepSeek)
@@ -88,11 +48,11 @@ function getLastAssistantText(filePath) {
 const summaryCache = new Map(); // session_id → { summary, generatedAt }
 
 async function generateSummary(transcript) {
-  const turns = readTranscriptTail(transcript, 32768);
+  const turns = readTranscriptTail(transcript, 48_000);
   if (turns.length === 0) return null;
 
   const messages = [];
-  for (const turn of turns.slice(-20)) {
+  for (const turn of turns.slice(-30)) {
     const role = turn.type === 'user' ? 'user' : 'assistant';
     const c = turn.message?.content;
     let content = '';
@@ -101,11 +61,27 @@ async function generateSummary(transcript) {
     } else if (Array.isArray(c)) {
       content = c.map(b => {
         if (b.type === 'text') return b.text;
-        if (b.type === 'tool_use') return `[${b.name}: ${JSON.stringify(b.input || {}).slice(0, 80)}]`;
+        if (b.type === 'tool_use') {
+          if (b.name === 'Bash') return `[Bash: ${(b.input?.command || '').slice(0, 150)}]`;
+          if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(b.name)) {
+            return `[${b.name}: ${b.input?.file_path || b.input?.path || ''}]`;
+          }
+          if (['Read', 'Glob', 'Grep', 'LS'].includes(b.name)) {
+            return `[${b.name}: ${b.input?.file_path || b.input?.pattern || b.input?.path || ''}]`;
+          }
+          return `[${b.name}: ${JSON.stringify(b.input || {}).slice(0, 100)}]`;
+        }
+        if (b.type === 'tool_result') {
+          const rc = Array.isArray(b.content)
+            ? b.content.map(x => x.text || '').join(' ')
+            : (typeof b.content === 'string' ? b.content : '');
+          const snippet = rc.trim().slice(0, 200);
+          return snippet ? `[Result: ${snippet}]` : '';
+        }
         return '';
       }).filter(Boolean).join(' ');
     }
-    if (content.trim()) messages.push({ role, content: content.slice(0, 600) });
+    if (content.trim()) messages.push({ role, content: content.slice(0, 900) });
   }
   if (messages.length === 0) return null;
 
@@ -120,18 +96,26 @@ async function generateSummary(transcript) {
       messages: [
         {
           role: 'system',
-          content: 'You monitor AI coding sessions. Given the recent conversation, write 2-3 terse sentences: (1) what task is being worked on, (2) current status/what just happened, (3) whether user input is needed. Be specific. No headers.',
+          content: 'You are monitoring a Claude Code AI coding session. Summarize the current state in 2-3 sentences. Include: (1) the specific task or files being worked on, (2) what tool was last used and what happened, (3) whether the session is blocked/waiting or actively progressing. Name specific files, functions, or errors when visible. Be concrete and terse. No headers or lists.',
         },
         ...messages,
       ],
-      max_tokens: 120,
-      temperature: 0.2,
+      max_tokens: 150,
+      temperature: 0.1,
     }),
     signal: AbortSignal.timeout(10000),
   });
 
   if (!response.ok) throw new Error(`DeepSeek API error: ${response.status}`);
   const data = await response.json();
+
+  // Track token usage for cost analytics
+  if (data.usage) {
+    db.incrementStat('ai_summary_calls', 1);
+    db.incrementStat('ai_prompt_tokens', data.usage.prompt_tokens || 0);
+    db.incrementStat('ai_completion_tokens', data.usage.completion_tokens || 0);
+  }
+
   return data.choices?.[0]?.message?.content?.trim() || null;
 }
 
@@ -191,6 +175,59 @@ function clampInt(raw, defaultVal, min, max) {
   const n = parseInt(raw, 10);
   if (isNaN(n)) return defaultVal;
   return Math.max(min, Math.min(max, n));
+}
+
+// ──────────────────────────────────────────────
+// Hook ingest rate limiter (no extra dependency)
+// 120 requests per minute per IP — allows burst from active sessions
+// while blocking runaway hooks or network-level abuse.
+// ──────────────────────────────────────────────
+
+const _hookBuckets = new Map(); // ip → timestamp[]
+const HOOK_RATE_MAX = 120;
+const HOOK_RATE_WINDOW_MS = 60_000;
+
+function hookRateLimited(ip) {
+  // Hook scripts always call from localhost — only rate-limit external IPs
+  // to guard against network-level abuse while never blocking legitimate hooks.
+  if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return false;
+  const now = Date.now();
+  const cutoff = now - HOOK_RATE_WINDOW_MS;
+  const bucket = (_hookBuckets.get(ip) || []).filter(t => t > cutoff);
+  if (bucket.length >= HOOK_RATE_MAX) {
+    _hookBuckets.set(ip, bucket);
+    return true;
+  }
+  bucket.push(now);
+  _hookBuckets.set(ip, bucket);
+  return false;
+}
+
+// ──────────────────────────────────────────────
+// Zombie session cleanup
+// Marks sessions as 'stopped' if their tmux target no longer exists
+// and their last heartbeat is more than 4 hours ago.
+// ──────────────────────────────────────────────
+
+function cleanupZombies() {
+  const liveTmuxNames = new Set(ptyManager.listTmuxSessions().map(s => s.name));
+  const active = db.getActiveSessions();
+  let cleaned = 0;
+  for (const s of active) {
+    if (s.status === 'waiting_permission') continue; // never auto-stop waiting sessions
+    const hasLiveTmux = s.tmux_target && liveTmuxNames.has(s.tmux_target);
+    if (!hasLiveTmux) {
+      const lastHb = s.last_heartbeat;
+      const msAgo = lastHb
+        ? Date.now() - new Date(lastHb.replace(' ', 'T') + 'Z').getTime()
+        : Infinity;
+      if (msAgo > 4 * 60 * 60 * 1000) {
+        db.updateStatus(s.session_id, 'stopped');
+        cleaned++;
+      }
+    }
+  }
+  return cleaned;
 }
 
 // ──────────────────────────────────────────────
@@ -314,7 +351,11 @@ export async function buildServer(opts = {}) {
   // REST: Hook ingest (called by Claude Code hook scripts)
   // ──────────────────────────────────────────────
 
-  fastify.post('/api/hooks', async (request, reply) => {
+  fastify.post('/api/hooks', { bodyLimit: 65_536 }, async (request, reply) => {
+    if (hookRateLimited(request.ip)) {
+      return reply.status(429).send({ error: 'Rate limit exceeded' });
+    }
+
     const payload = request.body;
     if (!payload || !payload.event || !payload.session_id) {
       return reply.status(400).send({ error: 'Missing event or session_id' });
@@ -712,6 +753,31 @@ export async function buildServer(opts = {}) {
 
   fastify.get('/api/info', async () => ({ serverCwd: __dirname, aiSummaryEnabled: config.aiSummaryEnabled }));
 
+  fastify.get('/api/stats', async () => db.getStats());
+
+  fastify.post('/api/sessions/cleanup-zombies', async () => {
+    const liveTmuxNames = new Set(ptyManager.listTmuxSessions().map(s => s.name));
+    const active = db.getActiveSessions();
+    let cleaned = 0;
+    for (const s of active) {
+      if (s.status === 'waiting_permission') continue;
+      const hasLiveTmux = s.tmux_target && liveTmuxNames.has(s.tmux_target);
+      if (!hasLiveTmux) {
+        const lastHb = s.last_heartbeat;
+        const msAgo = lastHb
+          ? Date.now() - new Date(lastHb.replace(' ', 'T') + 'Z').getTime()
+          : Infinity;
+        if (msAgo > 4 * 60 * 60 * 1000) {
+          db.updateStatus(s.session_id, 'stopped');
+          const updated = db.getSession(s.session_id);
+          if (updated) broadcastSessionUpdate(updated);
+          cleaned++;
+        }
+      }
+    }
+    return { cleaned };
+  });
+
   // ──────────────────────────────────────────────
   // REST: Events
   // ──────────────────────────────────────────────
@@ -847,6 +913,13 @@ const isMainModule = process.argv[1] && import.meta.url === pathToFileURL(proces
 
 if (isMainModule) {
   const server = await buildServer();
+
+  // Zombie cleanup on startup: mark sessions as stopped if their tmux target
+  // is gone and they haven't had a heartbeat in 4+ hours.
+  {
+    const n = cleanupZombies();
+    if (n > 0) console.log(`[startup] Marked ${n} zombie session(s) as stopped`);
+  }
 
   // Auto-cleanup: delete stopped sessions older than configured days
   if (config.sessionCleanupDays > 0) {

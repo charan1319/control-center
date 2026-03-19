@@ -1,32 +1,6 @@
-import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import config from './config.js';
-
-/**
- * Read the last assistant text block from a Claude Code transcript (JSONL).
- * Returns the trimmed text, or null if not found / unreadable.
- */
-function getLastAssistantText(transcriptPath) {
-  if (!transcriptPath) return null;
-  try {
-    const raw = readFileSync(transcriptPath, 'utf8');
-    const lines = raw.split('\n').filter(l => l.trim());
-    for (let i = lines.length - 1; i >= 0; i--) {
-      try {
-        const entry = JSON.parse(lines[i]);
-        const content = entry?.message?.content;
-        if (!Array.isArray(content)) continue;
-        for (let j = content.length - 1; j >= 0; j--) {
-          const block = content[j];
-          if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
-            return block.text.trim();
-          }
-        }
-      } catch { /* skip malformed lines */ }
-    }
-  } catch { /* transcript not readable */ }
-  return null;
-}
+import { getLastAssistantText } from './transcript.js';
 
 /**
  * Send a notification via OpenClaw's built-in Telegram channel.

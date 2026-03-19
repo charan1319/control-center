@@ -1,206 +1,202 @@
 #!/usr/bin/env bash
+# Control Center — one-command installer
+# Supports: Linux (native), WSL2, macOS
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOK_DIR="$HOME/.claude/hooks"
-SETTINGS_FILE="$HOME/.claude/settings.json"
+REPO_URL="https://github.com/charan1319/control-center.git"
+DEFAULT_INSTALL_DIR="$HOME/control-center"
+PORT=7700
 
-echo "╔══════════════════════════════════════════════╗"
-echo "║  Control Center — Lab PC Setup               ║"
-echo "╚══════════════════════════════════════════════╝"
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; RESET='\033[0m'
+info()    { echo -e "${CYAN}→${RESET} $*"; }
+success() { echo -e "${GREEN}✓${RESET} $*"; }
+warn()    { echo -e "${YELLOW}!${RESET} $*"; }
+die()     { echo -e "${RED}✗${RESET} $*" >&2; exit 1; }
+
+echo ""
+echo "  Control Center — Installer"
+echo "  ──────────────────────────"
 echo ""
 
-# ──────────────────────────────────────────────
-# 1. Check prerequisites
-# ──────────────────────────────────────────────
+# ── Detect OS ────────────────────────────────────
+IS_MAC=false
+if [[ "$(uname)" == "Darwin" ]]; then IS_MAC=true; fi
 
-echo "▸ Checking prerequisites..."
+# ── Check prerequisites ───────────────────────────
+info "Checking prerequisites..."
+
+command -v git   &>/dev/null || die "git not found. Install git first."
+command -v curl  &>/dev/null || die "curl not found."
+command -v jq    &>/dev/null || die "jq not found. Install: sudo apt install jq  |  brew install jq"
+command -v python3 &>/dev/null || die "python3 not found."
 
 if ! command -v node &>/dev/null; then
-  echo "  ✗ Node.js not found. Install Node.js 22+ and try again."
-  exit 1
+  die "Node.js not found. Install Node.js 20+ from https://nodejs.org or via nvm."
 fi
-
-NODE_MAJOR=$(node -v | sed 's/v\([0-9]*\).*/\1/')
-if [ "$NODE_MAJOR" -lt 22 ]; then
-  echo "  ✗ Node.js $NODE_MAJOR found, but 22+ is required."
-  exit 1
-fi
-echo "  ✓ Node.js $(node -v)"
+NODE_MAJ=$(node -e 'process.stdout.write(process.versions.node.split(".")[0])')
+[[ "$NODE_MAJ" -ge 20 ]] || die "Node.js 20+ required (found v$(node --version)). Upgrade via nvm."
 
 if ! command -v tmux &>/dev/null; then
-  echo "  ✗ tmux not found. Install tmux and try again."
-  exit 1
+  warn "tmux not found — terminal view will be disabled. Install: sudo apt install tmux"
 fi
-echo "  ✓ tmux $(tmux -V)"
 
-if ! command -v jq &>/dev/null; then
-  echo "  ✗ jq not found. Install jq (needed by hook scripts)."
-  exit 1
-fi
-echo "  ✓ jq $(jq --version)"
+success "Prerequisites OK (Node $(node --version))"
 
-if ! command -v curl &>/dev/null; then
-  echo "  ✗ curl not found. Install curl (needed by hook scripts)."
-  exit 1
-fi
-echo "  ✓ curl"
+# ── Install directory ─────────────────────────────
+echo ""
+read -rp "  Install directory [$DEFAULT_INSTALL_DIR]: " INSTALL_DIR
+INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+INSTALL_DIR="${INSTALL_DIR/#\~/$HOME}"
 
-# Check for C/C++ build tools (needed by node-pty and better-sqlite3)
-if ! command -v make &>/dev/null || ! (command -v gcc &>/dev/null || command -v cc &>/dev/null); then
-  echo "  ⚠ Build tools (make, gcc) not found. native modules may fail to compile."
-  echo "    On Ubuntu/Debian: sudo apt install -y build-essential python3"
-  echo "    On macOS: xcode-select --install"
-  echo ""
-  read -p "  Continue anyway? [y/N] " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then exit 1; fi
+if [[ -d "$INSTALL_DIR/.git" ]]; then
+  info "Existing repo found — pulling latest..."
+  git -C "$INSTALL_DIR" pull --ff-only
 else
-  echo "  ✓ Build tools (make, cc)"
+  info "Cloning repository..."
+  git clone "$REPO_URL" "$INSTALL_DIR"
+fi
+cd "$INSTALL_DIR"
+
+# ── npm install ───────────────────────────────────
+info "Installing Node.js dependencies..."
+npm install --omit=dev --silent
+success "Dependencies installed"
+
+# ── Create .env ───────────────────────────────────
+if [[ ! -f "$INSTALL_DIR/.env" ]]; then
+  info "Creating .env..."
+  cat > "$INSTALL_DIR/.env" <<EOF
+# Control Center configuration — edit to enable optional features
+CC_PORT=$PORT
+CC_HOST=0.0.0.0
+
+# AI session summaries via DeepSeek (get key at https://platform.deepseek.com)
+# DEEPSEEK_API_KEY=sk-...
+
+# Telegram notifications via OpenClaw (optional)
+# OPENCLAW_BIN=/path/to/openclaw
+# TELEGRAM_CHAT_ID=123456789
+
+# Session cleanup: auto-delete stopped sessions older than N days (0 = disabled)
+CC_SESSION_CLEANUP_DAYS=7
+
+# Auto-approve Claude Code tool permissions (comma-separated)
+CC_AUTO_APPROVE_TOOLS=Read,Glob,Grep,WebFetch,WebSearch,LS
+EOF
+  success ".env created — edit $INSTALL_DIR/.env to add API keys"
+else
+  info ".env already exists — skipping"
 fi
 
-echo ""
+# ── Deploy hooks ──────────────────────────────────
+HOOKS_DIR="$HOME/.claude/hooks"
+SETTINGS="$HOME/.claude/settings.json"
 
-# ──────────────────────────────────────────────
-# 2. Install npm dependencies (native compilation happens here)
-# ──────────────────────────────────────────────
+info "Deploying hook scripts..."
+mkdir -p "$HOOKS_DIR"
+cp "$INSTALL_DIR/hooks/cc-report.sh"    "$HOOKS_DIR/cc-report.sh"
+cp "$INSTALL_DIR/hooks/cc-heartbeat.sh" "$HOOKS_DIR/cc-heartbeat.sh"
+chmod +x "$HOOKS_DIR/cc-report.sh" "$HOOKS_DIR/cc-heartbeat.sh"
+success "Hook scripts → $HOOKS_DIR"
 
-echo "▸ Installing npm dependencies (this compiles native modules)..."
-cd "$SCRIPT_DIR"
-npm install
-echo "  ✓ Dependencies installed"
-echo ""
+# ── Register hooks in ~/.claude/settings.json ────
+info "Registering hooks in $SETTINGS..."
+[[ -f "$SETTINGS" ]] || echo '{}' > "$SETTINGS"
 
-# ──────────────────────────────────────────────
-# 3. Copy hook scripts
-# ──────────────────────────────────────────────
+python3 - "$HOOKS_DIR/cc-report.sh" "$HOOKS_DIR/cc-heartbeat.sh" "$SETTINGS" <<'PYEOF'
+import json, sys
+report, heartbeat, path = sys.argv[1], sys.argv[2], sys.argv[3]
 
-echo "▸ Installing hook scripts to $HOOK_DIR..."
-mkdir -p "$HOOK_DIR"
-cp "$SCRIPT_DIR/hooks/cc-report.sh" "$HOOK_DIR/"
-cp "$SCRIPT_DIR/hooks/cc-heartbeat.sh" "$HOOK_DIR/"
-chmod +x "$HOOK_DIR/cc-report.sh" "$HOOK_DIR/cc-heartbeat.sh"
-echo "  ✓ cc-report.sh"
-echo "  ✓ cc-heartbeat.sh"
-echo ""
+with open(path) as f:
+    cfg = json.load(f)
 
-# ──────────────────────────────────────────────
-# 4. Merge hook configuration into Claude Code settings
-#    IDEMPOTENT: strips existing control-center hooks before adding.
-# ──────────────────────────────────────────────
-
-echo "▸ Configuring Claude Code hooks..."
-
-# Generate the hooks JSON with absolute paths
-HOOKS_JSON=$(cat <<ENDJSON
-{
-  "SessionStart": [
-    { "hooks": [{ "type": "command", "command": "$HOOK_DIR/cc-report.sh" }] }
-  ],
-  "Stop": [
-    { "hooks": [{ "type": "command", "command": "$HOOK_DIR/cc-report.sh" }] }
-  ],
-  "PermissionRequest": [
-    { "hooks": [{ "type": "command", "command": "$HOOK_DIR/cc-report.sh" }] }
-  ],
-  "Notification": [
-    { "hooks": [{ "type": "command", "command": "$HOOK_DIR/cc-report.sh" }] }
-  ],
-  "PostToolUse": [
-    {
-      "matcher": "Bash|Write|Edit|MultiEdit",
-      "hooks": [{ "type": "command", "command": "$HOOK_DIR/cc-heartbeat.sh", "timeout": 5 }]
-    }
-  ]
+new_hooks = {
+    'SessionStart':      [{'hooks': [{'type':'command','command':report}]}],
+    'Stop':              [{'hooks': [{'type':'command','command':report}]}],
+    'PermissionRequest': [{'hooks': [{'type':'command','command':report}]}],
+    'Notification':      [{'hooks': [{'type':'command','command':report}]}],
+    'PostToolUse': [{'matcher':'Bash|Write|Edit|MultiEdit',
+                     'hooks':[{'type':'command','command':heartbeat,'timeout':5}]}],
 }
-ENDJSON
-)
 
-# Create settings.json if it doesn't exist
-mkdir -p "$HOME/.claude"
-if [ ! -f "$SETTINGS_FILE" ]; then
-  echo '{}' > "$SETTINGS_FILE"
-fi
+cfg.setdefault('hooks', {})
+for event, handlers in new_hooks.items():
+    if event not in cfg['hooks']:
+        cfg['hooks'][event] = handlers
+    else:
+        existing = {h.get('command','') for g in cfg['hooks'][event] for h in g.get('hooks',[])}
+        for g in handlers:
+            for h in g.get('hooks', []):
+                if h.get('command','') not in existing:
+                    cfg['hooks'][event].append({'hooks': [h]})
 
-# FIXED: Idempotent merge — first remove any existing hooks whose command
-# contains cc-report.sh or cc-heartbeat.sh, then append the new ones.
-MERGED=$(jq --arg hookdir "$HOOK_DIR" --argjson newhooks "$HOOKS_JSON" '
-  # Strip existing control-center hooks from each event array
-  .hooks = (
-    ((.hooks // {}) | to_entries | map(
-      .value = ([.value[] | select(
-        (.hooks // []) | all(.command | test("cc-report\\.sh|cc-heartbeat\\.sh") | not)
-      )] )
-    ) | from_entries) as $cleaned |
-    # Now append the new hooks
-    $newhooks | to_entries | reduce .[] as $entry (
-      $cleaned;
-      .[$entry.key] = ((.[$entry.key] // []) + $entry.value)
-    )
-  )
-' "$SETTINGS_FILE")
+with open(path, 'w') as f:
+    json.dump(cfg, f, indent=2)
+    f.write('\n')
+PYEOF
+success "Hooks registered in $SETTINGS"
 
-echo "$MERGED" > "$SETTINGS_FILE"
-echo "  ✓ Hooks merged into $SETTINGS_FILE (idempotent — safe to re-run)"
-echo ""
+# ── System service ────────────────────────────────
+NODE_BIN="$(command -v node)"
 
-# ──────────────────────────────────────────────
-# 5. Create .env if it doesn't exist
-# ──────────────────────────────────────────────
-
-if [ ! -f "$SCRIPT_DIR/.env" ]; then
-  cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
-  echo "▸ Created .env from .env.example"
-  echo "  Edit .env to set OPENCLAW_TOKEN if you want push notifications."
-  echo ""
-fi
-
-# ──────────────────────────────────────────────
-# 6. Optional: systemd user service (Linux only)
-# ──────────────────────────────────────────────
-
-if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
-  echo "▸ Setting up systemd user service..."
-  read -p "  Install as a systemd user service (auto-start on login)? [y/N] " -n 1 -r
-  echo
-
-  if [[ $REPLY =~ ^[Yy]$ ]]; then
-    mkdir -p "$HOME/.config/systemd/user"
-    cat > "$HOME/.config/systemd/user/control-center.service" << EOF
+if [[ "$IS_MAC" == "false" ]] && command -v systemctl &>/dev/null; then
+  SERVICE_DIR="$HOME/.config/systemd/user"
+  mkdir -p "$SERVICE_DIR"
+  cat > "$SERVICE_DIR/control-center.service" <<EOF
 [Unit]
-Description=Claude Code Control Center
+Description=Control Center — Claude Code dashboard
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=$SCRIPT_DIR
-EnvironmentFile=$SCRIPT_DIR/.env
-ExecStart=$(which node) server.js
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$NODE_BIN --env-file-if-exists=.env server.js
 Restart=on-failure
-RestartSec=5
-Environment=NODE_ENV=production
+RestartSec=5s
+Environment=HOME=$HOME
 
 [Install]
 WantedBy=default.target
 EOF
+  systemctl --user daemon-reload
+  systemctl --user enable --now control-center.service 2>/dev/null \
+    && success "Systemd service enabled and started" \
+    || warn "Could not start service — run manually: cd $INSTALL_DIR && npm start"
 
-    systemctl --user daemon-reload
-    systemctl --user enable control-center
-    systemctl --user start control-center
-    echo "  ✓ Service installed, enabled, and started"
-    echo "  Commands: systemctl --user {start|stop|restart|status} control-center"
-  else
-    echo "  Skipped. Run manually with: npm start"
-  fi
-elif [[ "$(uname)" == "Darwin" ]]; then
-  echo "▸ macOS detected. To auto-start, create a launchd plist or run manually:"
-  echo "  cd $SCRIPT_DIR && npm start"
+elif [[ "$IS_MAC" == "true" ]]; then
+  PLIST="$HOME/Library/LaunchAgents/com.control-center.plist"
+  mkdir -p "$(dirname "$PLIST")"
+  cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.control-center</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$NODE_BIN</string>
+    <string>--env-file-if-exists=.env</string>
+    <string>$INSTALL_DIR/server.js</string>
+  </array>
+  <key>WorkingDirectory</key><string>$INSTALL_DIR</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>$HOME/.control-center.log</string>
+  <key>StandardOutPath</key><string>$HOME/.control-center.log</string>
+</dict></plist>
+EOF
+  launchctl load "$PLIST" 2>/dev/null \
+    && success "launchd agent loaded" \
+    || warn "Could not load agent — run manually: cd $INSTALL_DIR && npm start"
 fi
 
+# ── Done ──────────────────────────────────────────
 echo ""
-echo "╔══════════════════════════════════════════════╗"
-echo "║  ✓ Setup complete!                           ║"
-echo "║                                              ║"
-echo "║  Start:  cd $SCRIPT_DIR && npm start"
-echo "║  Open:   http://localhost:7700               ║"
-echo "╚══════════════════════════════════════════════╝"
+echo -e "  ${GREEN}Done!${RESET} Control Center is installed."
+echo ""
+echo "  Dashboard  →  http://localhost:$PORT"
+echo "  Config     →  $INSTALL_DIR/.env"
+echo ""
+echo "  Next steps:"
+echo "  1. Add DEEPSEEK_API_KEY to .env for AI session summaries"
+echo "  2. Open a new Claude Code session — it will appear automatically"
+echo ""

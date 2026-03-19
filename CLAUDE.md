@@ -149,12 +149,14 @@ last_seen    TEXT    -- datetime('now') UTC
 | `PUT` | `/api/projects` | Replaces data/projects.json entirely |
 | `GET` | `/api/tmux-sessions` | Live tmux session list from pty-manager |
 | `GET` | `/api/info` | `{serverCwd, aiSummaryEnabled}` |
+| `GET` | `/api/stats` | `{totalSessions, sessionsThisWeek, totalEvents, mostUsedTool, avgDurationMinutes, aiSummaryCalls, aiCostUsd}` |
+| `POST` | `/api/sessions/cleanup-zombies` | Marks active sessions as stopped where tmux is gone + heartbeat > 4h old. Returns `{cleaned}`. Broadcasts updates. |
 
 ### Hook ingest
 
 | Method | Path | Notes |
 |--------|------|-------|
-| `POST` | `/api/hooks` | Called by hook scripts. Body fields: `event`, `session_id`, `cwd`, `transcript_path`, `tool_name`, `tool_input`, `tmux_session`, `model`, `timestamp` |
+| `POST` | `/api/hooks` | Called by hook scripts. Body limit: 64KB. Rate limit: 120 req/min per IP. Body fields: `event`, `session_id`, `cwd`, `transcript_path`, `tool_name`, `tool_input`, `tmux_session`, `model`, `timestamp` |
 
 ### WebSockets
 
