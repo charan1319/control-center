@@ -844,18 +844,11 @@ terminalContainer.addEventListener('wheel', (e) => {
   if (!term) return;
   e.preventDefault();
   e.stopPropagation();
-  // deltaMode 0 = pixels (Mac trackpad/touchpad), 1 = lines (mouse wheel), 2 = pages
-  let lines;
-  if (e.deltaMode === 0) {
-    // Trackpad: accumulate pixel deltas to avoid jumping on tiny gestures.
-    // ~30px per line feels natural on Mac Retina; round to nearest integer.
-    _wheelAccum += e.deltaY;
-    lines = Math.trunc(_wheelAccum / 5);
-    _wheelAccum -= lines * 5;
-  } else {
-    // Mouse wheel (line/page mode): use deltaY directly, min 1 line per click.
-    lines = Math.sign(e.deltaY) * Math.max(1, Math.round(Math.abs(e.deltaY)));
-  }
+  // Pixel mode (Mac trackpad): scale pixels to lines. 20px ≈ 1 line.
+  // Line/page mode (mouse wheel): use 3 lines per click.
+  const lines = e.deltaMode === 0
+    ? Math.round(e.deltaY / 20)
+    : Math.sign(e.deltaY) * 3;
   if (lines !== 0) term.scrollLines(lines);
 }, { passive: false, capture: true });
 

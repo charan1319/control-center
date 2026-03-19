@@ -28,6 +28,8 @@ async function sendPushNotification(title, body, tag = 'cc') {
       // 404/410 = subscription expired — clean it up
       if (err.statusCode === 404 || err.statusCode === 410) {
         db.deletePushSubscription(sub.endpoint);
+      } else {
+        console.error('[push] sendNotification failed:', err.statusCode, err.message);
       }
     }
   }));
@@ -280,6 +282,15 @@ export async function buildServer(opts = {}) {
         const msg = JSON.parse(rawData.toString());
         if (msg.type === 'input') {
           ptyProcess.write(msg.data);
+          // If the user typed anything into the terminal, they responded to the
+          // permission prompt — clear waiting_permission immediately so the Grant
+          // button disappears without waiting for the next hook event.
+          const cur = db.getSession(sessionId);
+          if (cur?.status === 'waiting_permission') {
+            db.updateStatus(sessionId, 'active');
+            const updated = db.getSession(sessionId);
+            if (updated) broadcastSessionUpdate(updated);
+          }
         } else if (msg.type === 'resize') {
           ptyManager.resize(session.tmux_target, msg.cols, msg.rows);
         }
@@ -396,25 +407,26 @@ export async function buildServer(opts = {}) {
     });
     if (session) broadcastSessionUpdate(session);
 
-    // 6. Notify via OpenClaw for high-priority events, but only if the session
-    // has been idle for 30+ seconds (skip when the user is actively watching).
-    // Also skip auto-approved permissions — they resolved silently.
+    // 6. Notify for high-priority events (skip auto-approved — resolved silently).
     if (!autoApproved && (event === 'Stop' || event === 'PermissionRequest')) {
       const lastHb = session?.last_heartbeat;
       const msAgo = lastHb
         ? Date.now() - new Date(lastHb.replace(' ', 'T') + 'Z').getTime()
         : Infinity;
+
+      // Telegram: only when idle 30s+ (avoid pinging when user is actively watching)
       if (msAgo >= 30_000) {
         notifier.send(payload).catch(() => {});
-        // Web Push notification (PWA) — only for permission requests
-        if (event === 'PermissionRequest') {
-          const label = session?.label || session_id.slice(0, 12);
-          sendPushNotification(
-            `Permission needed — ${label}`,
-            `Tool: ${payload.tool_name || 'unknown'}`,
-            `permission-${session_id}`,
-          ).catch(() => {});
-        }
+      }
+
+      // Web Push: always fire for permission requests — user always wants to know
+      if (event === 'PermissionRequest') {
+        const label = session?.label || session_id.slice(0, 12);
+        sendPushNotification(
+          `Permission needed — ${label}`,
+          `Tool: ${payload.tool_name || 'unknown'}`,
+          `permission-${session_id}`,
+        ).catch(() => {});
       }
     }
 

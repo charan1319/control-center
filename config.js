@@ -14,7 +14,7 @@ const config = {
 
   // PTY
   ptyGracePeriodMs: 30_000,      // Keep PTY alive 30s after last client disconnects
-  scrollbackBufferSize: 50_000,  // Characters of scrollback to replay on connect
+  scrollbackBufferSize: 300_000, // Characters of scrollback to replay on connect (history + live)
 
   // Notifications via OpenClaw → Telegram (leave either empty to disable)
   openclawBin: process.env.OPENCLAW_BIN || '',

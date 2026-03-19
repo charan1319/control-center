@@ -390,16 +390,35 @@ dialog select {
     overflow: hidden;
   }
 
-  /* Left column: scrollable session cards */
+  /* Left column: sessions on top (scrollable) + activity log pinned to bottom */
   #sessions-panel {
     width: 360px;
     flex-shrink: 0;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     border-right: 1px solid var(--border);
-    padding: 16px;
+    padding: 0;
   }
 
-  /* Right column: terminal on top, events pinned to bottom */
+  #summary-bar { padding: 12px 16px 0; flex-shrink: 0; }
+
+  #sessions-grid {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px 16px;
+  }
+
+  #events-panel {
+    flex-shrink: 0;
+    padding: 10px 16px 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  #events-list { max-height: 160px; }
+
+  /* Right column: terminal fills full height */
   #right-col {
     flex: 1;
     min-width: 0;
@@ -412,7 +431,6 @@ dialog select {
     margin: 0;
     border: none;
     border-radius: 0;
-    border-bottom: 1px solid var(--border);
   }
 
   /* Terminal container fills available height instead of fixed 520px */
@@ -421,14 +439,6 @@ dialog select {
     min-height: 0;
     height: auto !important;
   }
-
-  #events-panel {
-    flex-shrink: 0;
-    padding: 12px 16px;
-    border-top: none;
-  }
-
-  #events-list { max-height: 180px; }
 }
 
 /* PWA standalone: avoid content being hidden behind notches/home indicator */
