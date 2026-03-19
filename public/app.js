@@ -141,9 +141,6 @@ function renderSessionCard(s) {
   const preview = previewCache.get(s.session_id)?.text || '';
   const summary = summaryCache.get(s.session_id)?.summary || '';
 
-  // Project color accent
-  const pColor = projectColor(s.project);
-  const colorStyle = pColor ? ` style="--project-color:${pColor}"` : '';
 
   // Kill button: protect server's own directory from accidental kill
   const isServerSession = serverInfo.serverCwd && s.cwd === serverInfo.serverCwd;
@@ -158,7 +155,7 @@ function renderSessionCard(s) {
     : '';
 
   return `
-    <div class="session-card status-${statusClass} ${isSelected ? 'selected' : ''}" data-id="${safeId}"${colorStyle}>
+    <div class="session-card status-${statusClass} ${isSelected ? 'selected' : ''}" data-id="${safeId}">
       <div class="card-header">
         <span class="indicator ${statusClass}"></span>
         <span class="card-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
@@ -228,8 +225,10 @@ function renderSessions() {
     });
     for (const group of groups) {
       if (group) {
+        const color = projectColor(group);
+        const colorAttr = color ? ` style="color:${color};border-left-color:${color}"` : '';
         html += `<div class="project-group">
-          <div class="project-heading">${escapeHtml(group)}</div>
+          <div class="project-heading"${colorAttr}>${escapeHtml(group)}</div>
           <div class="project-sessions">${byProject[group].map(renderSessionCard).join('')}</div>
         </div>`;
       } else {

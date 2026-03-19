@@ -111,7 +111,8 @@ button.primary:active { opacity: 0.75; }
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
-  padding: 0 2px;
+  padding: 2px 6px;
+  border-left: 3px solid transparent;
 }
 .project-sessions {
   display: grid;
@@ -123,7 +124,7 @@ button.primary:active { opacity: 0.75; }
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px 16px 16px 19px;
+  padding: 16px;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
@@ -132,16 +133,6 @@ button.primary:active { opacity: 0.75; }
   display: flex;
   flex-direction: column;
   gap: 5px;
-  position: relative;
-}
-/* Project color accent — left edge stripe */
-.session-card::before {
-  content: '';
-  position: absolute;
-  left: 0; top: 0; bottom: 0;
-  width: 3px;
-  background: var(--project-color, transparent);
-  border-radius: var(--radius) 0 0 var(--radius);
 }
 .session-card:active { transform: scale(0.98); opacity: 0.9; }
 .session-card.status-active  { border-color: var(--green);  box-shadow: 0 0 0 1px var(--green); }
