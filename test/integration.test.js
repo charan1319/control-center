@@ -769,3 +769,120 @@ describe('Integration: Grant permission', () => {
     assert.equal(pollRes.json().status, 'granted');
   });
 });
+
+// ──────────────────────────────────────────────
+// Integration: Per-session auto-approve toggle
+// ──────────────────────────────────────────────
+describe('Integration: Per-session auto-approve toggle', () => {
+  it('auto_approve enabled (default): Read tool is auto-approved', async () => {
+    const sid = 'autoapprove-on-test';
+    await injectHook({ event: 'SessionStart', session_id: sid, cwd: '/tmp/ap-on' });
+
+    const res = await injectHook({
+      event: 'PermissionRequest',
+      session_id: sid,
+      tool_name: 'Read',
+      tool_input: { path: '/tmp/file.txt' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().auto_approve, true);
+
+    // Status should stay active (not waiting_permission)
+    const s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
+    assert.equal(s.status, 'active');
+  });
+
+  it('auto_approve disabled: Read tool is NOT auto-approved', async () => {
+    const sid = 'autoapprove-off-test';
+    await injectHook({ event: 'SessionStart', session_id: sid, cwd: '/tmp/ap-off' });
+
+    // Disable auto-approve for this session
+    const { updateSession } = await import('../db.js');
+    updateSession(sid, { auto_approve: 0 });
+
+    const res = await injectHook({
+      event: 'PermissionRequest',
+      session_id: sid,
+      tool_name: 'Read',
+      tool_input: { path: '/tmp/file.txt' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().auto_approve, false);
+
+    // Status should be waiting_permission
+    const s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
+    assert.equal(s.status, 'waiting_permission');
+  });
+
+  it('auto_approve disabled: Glob tool is NOT auto-approved', async () => {
+    const sid = 'autoapprove-glob-off';
+    await injectHook({ event: 'SessionStart', session_id: sid, cwd: '/tmp/ap-glob' });
+
+    const { updateSession } = await import('../db.js');
+    updateSession(sid, { auto_approve: 0 });
+
+    const res = await injectHook({
+      event: 'PermissionRequest',
+      session_id: sid,
+      tool_name: 'Glob',
+      tool_input: { pattern: '**/*.js' },
+    });
+    assert.equal(res.json().auto_approve, false);
+
+    const s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
+    assert.equal(s.status, 'waiting_permission');
+  });
+
+  it('auto_approve no-edits (mode 2): Read and Bash are approved, Write is NOT', async () => {
+    const sid = 'autoapprove-noedits-test';
+    await injectHook({ event: 'SessionStart', session_id: sid, cwd: '/tmp/ap-ne' });
+
+    const { updateSession } = await import('../db.js');
+    updateSession(sid, { auto_approve: 2 });
+
+    // Read → approved
+    const readRes = await injectHook({
+      event: 'PermissionRequest',
+      session_id: sid,
+      tool_name: 'Read',
+      tool_input: { path: '/tmp/x' },
+    });
+    assert.equal(readRes.json().auto_approve, true);
+
+    // Reset for Bash test
+    await injectHook({ event: 'SessionStart', session_id: sid, cwd: '/tmp/ap-ne' });
+    updateSession(sid, { auto_approve: 2 });
+
+    // Bash (safe read-only command) → approved in no-edits mode
+    const bashRes = await injectHook({
+      event: 'PermissionRequest',
+      session_id: sid,
+      tool_name: 'Bash',
+      tool_input: { command: 'ls /tmp' },
+    });
+    assert.equal(bashRes.json().auto_approve, true);
+
+    // Reset for Write test
+    await injectHook({ event: 'SessionStart', session_id: sid, cwd: '/tmp/ap-ne' });
+    updateSession(sid, { auto_approve: 2 });
+
+    // Write → NOT approved in no-edits mode
+    const writeRes = await injectHook({
+      event: 'PermissionRequest',
+      session_id: sid,
+      tool_name: 'Write',
+      tool_input: { path: '/tmp/x', content: 'hi' },
+    });
+    assert.equal(writeRes.json().auto_approve, false);
+  });
+
+  it('launch endpoint rejects invalid autoApprove value', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions/launch',
+      payload: { label: 'test', autoApprove: 'yes' },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.match(res.json().error, /autoApprove must be/);
+  });
+});

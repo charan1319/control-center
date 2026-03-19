@@ -25,6 +25,8 @@ body {
   color: var(--text-primary);
   line-height: 1.5;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 #header {
@@ -40,6 +42,9 @@ body {
 }
 #header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
 #header-actions { display: flex; align-items: center; gap: 12px; }
+.btn-notif { padding: 6px 10px; font-size: 16px; opacity: 0.35; }
+.btn-notif.notif-granted { opacity: 1; }
+.btn-notif.notif-denied { opacity: 0.35; }
 
 button {
   font-family: var(--font-sans);
@@ -50,15 +55,32 @@ button {
   background: var(--bg-overlay);
   color: var(--text-primary);
   cursor: pointer;
-  transition: background 0.15s;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s, opacity 0.1s, transform 0.1s;
 }
 button:hover { background: var(--border); }
+button:active { opacity: 0.7; transform: scale(0.96); }
 button.primary { background: var(--accent); color: var(--bg-base); border-color: var(--accent); font-weight: 600; }
 button.primary:hover { opacity: 0.9; }
+button.primary:active { opacity: 0.75; }
 
 .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .status-dot.connected { background: var(--green); }
 .status-dot.disconnected { background: var(--red); }
+
+#main-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#right-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 
 #sessions-panel { padding: 16px 20px; }
 
@@ -103,12 +125,15 @@ button.primary:hover { opacity: 0.9; }
   border-radius: var(--radius);
   padding: 16px;
   cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s, opacity 0.1s;
   min-height: 120px;
   display: flex;
   flex-direction: column;
   gap: 5px;
 }
+.session-card:active { transform: scale(0.98); opacity: 0.9; }
 .session-card.status-active  { border-color: var(--green);  box-shadow: 0 0 0 1px var(--green); }
 .session-card.status-idle    { border-color: var(--border); }
 .session-card.status-waiting { border-color: var(--red);    box-shadow: 0 0 0 1px var(--red); animation: pulse-border 1.5s infinite; }
@@ -201,6 +226,8 @@ button.primary:hover { opacity: 0.9; }
   border-radius: var(--radius);
   overflow: hidden;
   background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
 }
 #terminal-panel.hidden { display: none; }
 #terminal-header {
@@ -213,7 +240,7 @@ button.primary:hover { opacity: 0.9; }
   font-size: 13px;
   font-family: var(--font-mono);
 }
-#terminal-container { height: 520px; padding: 4px; }
+#terminal-container { height: 520px; padding: 4px; touch-action: none; overflow: hidden; will-change: transform; }
 
 /* Input bar (always visible below terminal) */
 #terminal-input-bar {
@@ -282,7 +309,7 @@ button.primary:hover { opacity: 0.9; }
 .event-row .ev-event.PermissionRequest { color: var(--orange); }
 .event-row .ev-event.Notification { color: var(--accent); }
 .event-row.permission-request { background: rgba(250, 179, 135, 0.08); }
-.event-row.clickable { cursor: pointer; }
+.event-row.clickable { cursor: pointer; transition: background 0.1s; -webkit-tap-highlight-color: transparent; }
 .event-row.clickable:hover { background: rgba(137, 180, 250, 0.07); }
 
 .empty-events { padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px; }
@@ -325,6 +352,7 @@ dialog select {
   font-family: var(--font-mono);
   font-size: 13px;
 }
+.tmux-option { transition: border-color 0.15s, background 0.15s; -webkit-tap-highlight-color: transparent; }
 .tmux-option:hover { border-color: var(--accent); background: var(--bg-overlay); }
 .tmux-option .tmux-name { font-weight: 600; }
 .tmux-option .tmux-cwd { color: var(--text-muted); font-size: 12px; }
@@ -351,4 +379,60 @@ dialog select {
 /* Very small screens: hide quick buttons to give text input more space */
 @media (max-width: 380px) {
   #terminal-quick-btns { display: none; }
+}
+
+/* ── Desktop split layout: sessions left, terminal+events right ── */
+@media (min-width: 900px) {
+  body { height: 100vh; overflow: hidden; }
+
+  #main-layout {
+    flex-direction: row;
+    overflow: hidden;
+  }
+
+  /* Left column: scrollable session cards */
+  #sessions-panel {
+    width: 360px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+    padding: 16px;
+  }
+
+  /* Right column: terminal on top, events pinned to bottom */
+  #right-col {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  #terminal-panel {
+    flex: 1;
+    min-height: 0;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Terminal container fills available height instead of fixed 520px */
+  #terminal-container {
+    flex: 1;
+    min-height: 0;
+    height: auto !important;
+  }
+
+  #events-panel {
+    flex-shrink: 0;
+    padding: 12px 16px;
+    border-top: none;
+  }
+
+  #events-list { max-height: 180px; }
+}
+
+/* PWA standalone: avoid content being hidden behind notches/home indicator */
+@supports (padding: env(safe-area-inset-top)) {
+  #header { padding-top: max(12px, env(safe-area-inset-top)); }
+  #terminal-input-bar { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
 }

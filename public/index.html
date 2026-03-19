@@ -2,8 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Control Center</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#cba6f7">
+
+  <!-- Android Chrome standalone -->
+  <meta name="mobile-web-app-capable" content="yes">
+
+  <!-- iOS Safari standalone (shows full-screen when added to home screen) -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Control Center">
+  <link rel="apple-touch-icon" href="/icons/icon.svg">
+
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -12,39 +26,44 @@
     <h1>⌘ Control Center</h1>
     <div id="header-actions">
       <span id="connection-status" class="status-dot disconnected" title="WebSocket disconnected"></span>
+      <button id="btn-notifications" title="Enable push notifications" class="btn-notif" aria-label="Notifications">🔔</button>
       <button id="btn-new-session" title="Launch new Claude Code session">+ New Session</button>
     </div>
   </header>
 
-  <section id="sessions-panel">
-    <div id="summary-bar"></div>
-    <div id="sessions-grid"></div>
-  </section>
+  <main id="main-layout">
+    <section id="sessions-panel">
+      <div id="summary-bar"></div>
+      <div id="sessions-grid"></div>
+    </section>
 
-  <section id="terminal-panel" class="hidden">
-    <div id="terminal-header">
-      <span id="terminal-title">No session selected</span>
-      <button id="btn-close-terminal" title="Close terminal">✕</button>
-    </div>
-    <div id="terminal-container"></div>
-    <div id="terminal-input-bar">
-      <div id="terminal-quick-btns">
-        <button id="btn-ctrl-c" title="Send Ctrl+C">⌃C</button>
-        <button id="btn-tab" title="Send Tab">⇥ Tab</button>
-        <button id="btn-arrow-up" title="Arrow Up (history)">↑</button>
-        <button id="btn-arrow-down" title="Arrow Down (history)">↓</button>
-      </div>
-      <input type="text" id="terminal-text-input"
-        placeholder="Type to send…"
-        autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
-      <button id="btn-terminal-send" title="Send (Enter)">↵</button>
-    </div>
-  </section>
+    <div id="right-col">
+      <section id="terminal-panel" class="hidden">
+        <div id="terminal-header">
+          <span id="terminal-title">No session selected</span>
+          <button id="btn-close-terminal" title="Close terminal">✕</button>
+        </div>
+        <div id="terminal-container"></div>
+        <div id="terminal-input-bar">
+          <div id="terminal-quick-btns">
+            <button id="btn-ctrl-c" title="Send Ctrl+C">⌃C</button>
+            <button id="btn-tab" title="Send Tab">⇥ Tab</button>
+            <button id="btn-arrow-up" title="Arrow Up (history)">↑</button>
+            <button id="btn-arrow-down" title="Arrow Down (history)">↓</button>
+          </div>
+          <input type="text" id="terminal-text-input"
+            placeholder="Type to send…"
+            autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+          <button id="btn-terminal-send" title="Send (Enter)">↵</button>
+        </div>
+      </section>
 
-  <section id="events-panel">
-    <h2>Activity Log</h2>
-    <div id="events-list"></div>
-  </section>
+      <section id="events-panel">
+        <h2>Activity Log</h2>
+        <div id="events-list"></div>
+      </section>
+    </div>
+  </main>
 
   <dialog id="new-session-modal">
     <h2>New Session</h2>
@@ -57,6 +76,13 @@
         <input type="text" id="ns-cwd" placeholder="/path/to/project" class="hidden" style="margin-top:6px">
       </label>
       <label>Initial Prompt (optional)<textarea id="ns-prompt" rows="3" placeholder="Fix the failing tests in src/auth/"></textarea></label>
+      <label>Auto-approve permissions
+        <select id="ns-auto-approve">
+          <option value="full">Full — approve all safe tools including edits</option>
+          <option value="readonly">No edits — approve reads, bash &amp; searches, not file writes</option>
+          <option value="none">None — manual approval for everything</option>
+        </select>
+      </label>
       <div class="modal-actions">
         <button type="button" id="btn-cancel-modal">Cancel</button>
         <button type="button" id="btn-launch" class="primary">Launch</button>

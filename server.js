@@ -6,10 +6,32 @@ import { dirname, join, basename } from 'node:path';
 import { hostname } from 'node:os';
 import { execFileSync, execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, openSync, closeSync, readSync, fstatSync } from 'node:fs';
+import webpush from 'web-push';
 import config from './config.js';
 import * as db from './db.js';
 import * as ptyManager from './pty-manager.js';
 import * as notifier from './notifier.js';
+
+// Configure web-push VAPID keys (no-op if keys not set)
+if (config.pushEnabled) {
+  webpush.setVapidDetails(config.vapidEmail, config.vapidPublicKey, config.vapidPrivateKey);
+}
+
+async function sendPushNotification(title, body, tag = 'cc') {
+  if (!config.pushEnabled) return;
+  const subscriptions = db.getAllPushSubscriptions();
+  const payload = JSON.stringify({ title, body, tag });
+  await Promise.all(subscriptions.map(async sub => {
+    try {
+      await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload);
+    } catch (err) {
+      // 404/410 = subscription expired — clean it up
+      if (err.statusCode === 404 || err.statusCode === 410) {
+        db.deletePushSubscription(sub.endpoint);
+      }
+    }
+  }));
+}
 
 const PROJECTS_PATH = join(dirname(fileURLToPath(import.meta.url)), 'data', 'projects.json');
 
@@ -114,8 +136,22 @@ async function generateSummary(transcript) {
 // Auto-approve permissions
 // ──────────────────────────────────────────────
 
-function shouldAutoApprove(payload) {
+// File-editing tools that are never auto-approved in "no-edits" mode
+const EDIT_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+
+// auto_approve DB values: 0 = none, 1 = full (config-driven), 2 = no-edits (all except file writes)
+function shouldAutoApprove(payload, session) {
+  const mode = session?.auto_approve ?? 1; // default: full
+  if (mode === 0) return false;
+
   const toolName = payload.tool_name || '';
+
+  if (mode === 2) {
+    // No-edits mode: approve everything the full mode would, except file-editing tools
+    if (EDIT_TOOLS.has(toolName)) return false;
+  }
+
+  // Full mode (mode === 1): use server-configured tool list + bash pattern
   if (config.autoApproveTools.includes(toolName)) return true;
 
   if (toolName === 'Bash' && config.autoApproveBashPattern) {
@@ -292,6 +328,7 @@ export async function buildServer(opts = {}) {
           tmux_target: match.name,
           label: validPending ? pending.label : defaultLabel,
           project: validPending ? pending.project : undefined,
+          auto_approve: validPending ? pending.autoApproveDbVal : undefined,
         });
         if (pending) pendingLabels.delete(match.name);
       }
@@ -305,12 +342,12 @@ export async function buildServer(opts = {}) {
       // will naturally show it as 'idle'. Only the Kill API sets 'stopped'.
       db.updateStatus(session_id, 'active');
     } else if (event === 'PermissionRequest') {
-      if (shouldAutoApprove(payload)) {
+      const sess = db.getSession(session_id);
+      if (shouldAutoApprove(payload, sess)) {
         autoApproved = true;
         // Claude Code shows the TUI permission prompt AFTER the hook exits, so we
         // can't paste immediately (the TUI isn't there yet). Schedule a delayed paste
         // so "1\n" arrives once the TUI is visible.
-        const sess = db.getSession(session_id);
         if (sess?.tmux_target && /^[a-zA-Z0-9_-]+$/.test(sess.tmux_target)) {
           const tmuxTarget = sess.tmux_target;
           setTimeout(() => {
@@ -369,6 +406,15 @@ export async function buildServer(opts = {}) {
         : Infinity;
       if (msAgo >= 30_000) {
         notifier.send(payload).catch(() => {});
+        // Web Push notification (PWA) — only for permission requests
+        if (event === 'PermissionRequest') {
+          const label = session?.label || session_id.slice(0, 12);
+          sendPushNotification(
+            `Permission needed — ${label}`,
+            `Tool: ${payload.tool_name || 'unknown'}`,
+            `permission-${session_id}`,
+          ).catch(() => {});
+        }
       }
     }
 
@@ -417,7 +463,7 @@ export async function buildServer(opts = {}) {
   // ──────────────────────────────────────────────
 
   fastify.post('/api/sessions/launch', async (request, reply) => {
-    const { label, cwd, initialPrompt, project } = request.body || {};
+    const { label, cwd, initialPrompt, project, autoApprove } = request.body || {};
 
     // Input validation
     if (label && (typeof label !== 'string' || label.length > 256)) {
@@ -429,6 +475,9 @@ export async function buildServer(opts = {}) {
     if (initialPrompt && (typeof initialPrompt !== 'string' || initialPrompt.length > 10_000)) {
       return reply.status(400).send({ error: 'Initial prompt too long (max 10,000 characters)' });
     }
+    if (autoApprove !== undefined && !['full', 'readonly', 'none'].includes(autoApprove)) {
+      return reply.status(400).send({ error: "autoApprove must be 'full', 'readonly', or 'none'" });
+    }
 
     try {
       const tmuxTarget = ptyManager.createTmuxSession({
@@ -436,8 +485,16 @@ export async function buildServer(opts = {}) {
         cwd: cwd || process.env.HOME,
         initialPrompt,
       });
-      // Store label so the SessionStart hook handler can apply it when auto-linking
-      if (label || project) pendingLabels.set(tmuxTarget, { label, project: project || undefined, createdAt: Date.now() });
+      // Store label/project/autoApprove so the SessionStart hook handler can apply them when auto-linking
+      if (label || project || autoApprove !== undefined) {
+        const autoApproveDbVal = autoApprove === 'none' ? 0 : autoApprove === 'readonly' ? 2 : 1;
+        pendingLabels.set(tmuxTarget, {
+          label,
+          project: project || undefined,
+          autoApproveDbVal,
+          createdAt: Date.now(),
+        });
+      }
       return { success: true, tmux_target: tmuxTarget, label };
     } catch (err) {
       return reply.status(500).send({ error: `Failed to create session: ${err.message}` });
@@ -635,6 +692,32 @@ export async function buildServer(opts = {}) {
     }
     writeFileSync(PROJECTS_PATH, JSON.stringify(projects, null, 2) + '\n');
     return projects;
+  });
+
+  // ──────────────────────────────────────────────
+  // REST: Web Push subscriptions
+  // ──────────────────────────────────────────────
+
+  fastify.get('/api/push/vapid-public-key', async () => ({
+    publicKey: config.vapidPublicKey,
+    enabled: config.pushEnabled,
+  }));
+
+  fastify.post('/api/push/subscribe', async (request, reply) => {
+    if (!config.pushEnabled) return reply.status(503).send({ error: 'Push not configured' });
+    const { endpoint, keys } = request.body || {};
+    if (!endpoint || !keys?.p256dh || !keys?.auth) {
+      return reply.status(400).send({ error: 'Invalid subscription object' });
+    }
+    db.upsertPushSubscription({ endpoint, p256dh: keys.p256dh, auth: keys.auth });
+    return reply.status(201).send({ ok: true });
+  });
+
+  fastify.delete('/api/push/unsubscribe', async (request, reply) => {
+    const { endpoint } = request.body || {};
+    if (!endpoint) return reply.status(400).send({ error: 'Missing endpoint' });
+    db.deletePushSubscription(endpoint);
+    return reply.status(204).send();
   });
 
   // Periodically clean up stale pending labels (if SessionStart hook never fired)

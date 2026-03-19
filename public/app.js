@@ -9,6 +9,7 @@ let ws = null;
 let termWs = null;
 let term = null;
 let fitAddon = null;
+let _wheelAccum = 0;
 
 let serverInfo = { serverCwd: null };
 let previewCache = new Map();  // session_id → { text, fetchedAt }
@@ -549,6 +550,7 @@ function closeTerminal(keepSelection) {
   if (termWs) { try { termWs.close(); } catch {} termWs = null; }
   if (term) { term.dispose(); term = null; }
   fitAddon = null;
+  _wheelAccum = 0;
   terminalPanel.classList.add('hidden');
   if (!keepSelection) {
     selectedSessionId = null;
@@ -619,6 +621,7 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
     ? (projectPresets.find(p => p.cwd === presetVal)?.name || undefined)
     : undefined;
   const initialPrompt = document.getElementById('ns-prompt').value.trim();
+  const autoApprove = document.getElementById('ns-auto-approve').value; // 'full' | 'readonly' | 'none'
 
   if (!label) {
     document.getElementById('ns-label').focus();
@@ -636,6 +639,7 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
         project: project || undefined,
         cwd: cwd || undefined,
         initialPrompt: initialPrompt || undefined,
+        autoApprove,
       }),
     }, 30000);
     if (!res.ok) throw new Error((await res.json()).error);
@@ -645,6 +649,7 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
     document.getElementById('ns-cwd').value = '';
     document.getElementById('ns-cwd-preset').selectedIndex = 0;
     document.getElementById('ns-prompt').value = '';
+    document.getElementById('ns-auto-approve').selectedIndex = 0;
   } catch (err) {
     alert(`Failed to launch: ${err.message}`);
   } finally {
@@ -839,8 +844,37 @@ terminalContainer.addEventListener('wheel', (e) => {
   if (!term) return;
   e.preventDefault();
   e.stopPropagation();
-  term.scrollLines(e.deltaY > 0 ? 3 : -3);
+  // deltaMode 0 = pixels (Mac trackpad/touchpad), 1 = lines (mouse wheel), 2 = pages
+  let lines;
+  if (e.deltaMode === 0) {
+    // Trackpad: accumulate pixel deltas to avoid jumping on tiny gestures.
+    // ~30px per line feels natural on Mac Retina; round to nearest integer.
+    _wheelAccum += e.deltaY;
+    lines = Math.trunc(_wheelAccum / 5);
+    _wheelAccum -= lines * 5;
+  } else {
+    // Mouse wheel (line/page mode): use deltaY directly, min 1 line per click.
+    lines = Math.sign(e.deltaY) * Math.max(1, Math.round(Math.abs(e.deltaY)));
+  }
+  if (lines !== 0) term.scrollLines(lines);
 }, { passive: false, capture: true });
+
+// Mobile touch scrolling — convert vertical swipes to xterm scroll lines.
+// preventDefault() stops the browser from scrolling the page (which causes
+// the canvas to glitch and content to disappear on mobile).
+let _touchStartY = 0;
+terminalContainer.addEventListener('touchstart', (e) => {
+  _touchStartY = e.touches[0].clientY;
+}, { passive: true });
+
+terminalContainer.addEventListener('touchmove', (e) => {
+  if (!term) return;
+  e.preventDefault();
+  const dy = _touchStartY - e.touches[0].clientY;
+  _touchStartY = e.touches[0].clientY;
+  const lines = Math.round(dy / 18); // ~18px per line
+  if (lines !== 0) term.scrollLines(lines);
+}, { passive: false });
 
 // ──────────────────────────────────────────────
 // Server info, transcript previews, AI summaries
@@ -894,3 +928,63 @@ connectDashboardWS();
 // Refresh previews every 20s, summaries every 90s
 setInterval(refreshPreviews, 20_000);
 setInterval(refreshSummaries, 90_000);
+
+// ──────────────────────────────────────────────
+// PWA: service worker + push notifications
+// ──────────────────────────────────────────────
+
+// Convert a URL-safe base64 VAPID public key to a Uint8Array for pushManager.subscribe
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+const notifBtn = document.getElementById('btn-notifications');
+
+function updateNotifBtn() {
+  if (!('Notification' in window)) { notifBtn.classList.add('notif-denied'); return; }
+  if (Notification.permission === 'granted') notifBtn.classList.add('notif-granted');
+  else if (Notification.permission === 'denied') notifBtn.classList.add('notif-denied');
+}
+updateNotifBtn();
+
+async function subscribeToPush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    alert('Push notifications require HTTPS. Access via your Tailscale URL.');
+    return;
+  }
+  const permission = await Notification.requestPermission();
+  updateNotifBtn();
+  if (permission !== 'granted') return;
+
+  try {
+    const keyRes = await fetchWithTimeout('/api/push/vapid-public-key');
+    const { publicKey, enabled } = await keyRes.json();
+    if (!enabled) { alert('Push notifications are not configured on the server.'); return; }
+
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    });
+
+    const res = await fetchWithTimeout('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sub),
+    });
+    if (!res.ok) throw new Error((await res.json()).error);
+    notifBtn.title = 'Push notifications enabled';
+  } catch (err) {
+    alert(`Failed to enable push notifications: ${err.message}`);
+  }
+}
+
+notifBtn.addEventListener('click', subscribeToPush);
+
+// PWA service worker (only activates over HTTPS or localhost)
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}

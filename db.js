@@ -27,6 +27,7 @@ db.exec(`
 
 // Safe migration — ALTER TABLE is ignored if the column already exists
 try { db.exec(`ALTER TABLE sessions ADD COLUMN project TEXT`); } catch { /* already exists */ }
+try { db.exec(`ALTER TABLE sessions ADD COLUMN auto_approve INTEGER DEFAULT 1`); } catch { /* already exists */ }
 
 db.exec(`
 
@@ -51,6 +52,13 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
   CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
   CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    endpoint    TEXT PRIMARY KEY,
+    p256dh      TEXT NOT NULL,
+    auth        TEXT NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 // ──────────────────────────────────────────────
@@ -92,6 +100,7 @@ const stmts = {
       label = COALESCE(@label, label),
       tmux_target = COALESCE(@tmux_target, tmux_target),
       project = COALESCE(@project, project),
+      auto_approve = COALESCE(@auto_approve, auto_approve),
       updated_at = datetime('now')
     WHERE session_id = @session_id
   `),
@@ -180,12 +189,13 @@ export function updateStatus(session_id, status) {
   return stmts.updateStatus.run({ session_id, status });
 }
 
-export function updateSession(session_id, { label, tmux_target, project }) {
+export function updateSession(session_id, { label, tmux_target, project, auto_approve }) {
   return stmts.updateSession.run({
     session_id,
     label: label ?? null,
     tmux_target: tmux_target ?? null,
     project: project ?? null,
+    auto_approve: auto_approve ?? null,
   });
 }
 
@@ -211,6 +221,27 @@ export function getActiveSessions() {
 
 export function ensureSession(session_id) {
   return stmts.ensureSession.run({ session_id });
+}
+
+// ── Push subscriptions ──────────────────────────
+const pushStmts = {
+  upsert: db.prepare(`
+    INSERT INTO push_subscriptions (endpoint, p256dh, auth)
+    VALUES (@endpoint, @p256dh, @auth)
+    ON CONFLICT(endpoint) DO UPDATE SET p256dh = @p256dh, auth = @auth
+  `),
+  getAll: db.prepare(`SELECT endpoint, p256dh, auth FROM push_subscriptions`),
+  delete: db.prepare(`DELETE FROM push_subscriptions WHERE endpoint = @endpoint`),
+};
+
+export function upsertPushSubscription({ endpoint, p256dh, auth }) {
+  return pushStmts.upsert.run({ endpoint, p256dh, auth });
+}
+export function getAllPushSubscriptions() {
+  return pushStmts.getAll.all();
+}
+export function deletePushSubscription(endpoint) {
+  return pushStmts.delete.run({ endpoint });
 }
 
 // ADDED: clean shutdown support
