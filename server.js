@@ -306,18 +306,20 @@ export async function buildServer(opts = {}) {
       db.updateStatus(session_id, 'active');
     } else if (event === 'PermissionRequest') {
       if (shouldAutoApprove(payload)) {
-        // Mark as auto-approved immediately — the hook script handles the actual
-        // approval by outputting {"decision":"approve"} to stdout (modern Claude Code).
         autoApproved = true;
-        // Also try tmux paste as a fallback for older Claude Code versions that
-        // still show a terminal prompt.
+        // Claude Code shows the TUI permission prompt AFTER the hook exits, so we
+        // can't paste immediately (the TUI isn't there yet). Schedule a delayed paste
+        // so "1\n" arrives once the TUI is visible.
         const sess = db.getSession(session_id);
         if (sess?.tmux_target && /^[a-zA-Z0-9_-]+$/.test(sess.tmux_target)) {
-          try {
-            const buf = `cc-ap-${Date.now()}`;
-            execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: '1\n', timeout: 5_000 });
-            execFileSync('tmux', ['paste-buffer', '-t', sess.tmux_target, '-b', buf, '-d'], { timeout: 5_000 });
-          } catch { /* tmux paste failed — hook output handles it */ }
+          const tmuxTarget = sess.tmux_target;
+          setTimeout(() => {
+            try {
+              const buf = `cc-ap-${Date.now()}`;
+              execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: '1\n', timeout: 5_000 });
+              execFileSync('tmux', ['paste-buffer', '-t', tmuxTarget, '-b', buf, '-d'], { timeout: 5_000 });
+            } catch { /* tmux paste failed */ }
+          }, 800);
         }
       }
       if (!autoApproved) {
@@ -503,11 +505,29 @@ export async function buildServer(opts = {}) {
     const session = db.getSession(sid);
     if (!session) return reply.status(404).send({ error: 'Session not found' });
 
+    // Send "1\n" to the tmux pane to answer the TUI permission prompt.
+    // Claude Code shows the prompt in the terminal regardless of hook stdout output,
+    // so we must send the keystroke directly.
+    if (session.tmux_target && /^[a-zA-Z0-9_-]+$/.test(session.tmux_target)) {
+      try {
+        const buf = `cc-gp-${Date.now()}`;
+        execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: '1\n', timeout: 5_000 });
+        execFileSync('tmux', ['paste-buffer', '-t', session.tmux_target, '-b', buf, '-d'], { timeout: 5_000 });
+      } catch { /* tmux paste failed — long-poll resolution still clears waiting state */ }
+    }
+
+    // Resolve hook long-poll if the hook is waiting
     const resolve = pendingPermissions.get(sid);
     if (resolve) {
       resolve();
       pendingPermissions.delete(sid);
     }
+
+    // Update status and broadcast
+    db.updateStatus(sid, 'active');
+    const updated = db.getSession(sid);
+    broadcastSessionUpdate(updated);
+
     return reply.status(204).send();
   });
 
