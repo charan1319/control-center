@@ -97,14 +97,16 @@ const stmts = {
   `),
 
   getSession: db.prepare(`
-    SELECT s.*, h.tool_name AS last_tool, h.last_seen AS last_heartbeat
+    SELECT s.*, h.tool_name AS last_tool, h.last_seen AS last_heartbeat,
+      (SELECT COUNT(*) FROM events WHERE events.session_id = s.session_id) AS tool_count
     FROM sessions s
     LEFT JOIN heartbeats h ON s.session_id = h.session_id
     WHERE s.session_id = @session_id
   `),
 
   getAllSessions: db.prepare(`
-    SELECT s.*, h.tool_name AS last_tool, h.last_seen AS last_heartbeat
+    SELECT s.*, h.tool_name AS last_tool, h.last_seen AS last_heartbeat,
+      (SELECT COUNT(*) FROM events WHERE events.session_id = s.session_id) AS tool_count
     FROM sessions s
     LEFT JOIN heartbeats h ON s.session_id = h.session_id
     ORDER BY s.updated_at DESC

@@ -22,6 +22,16 @@ const config = {
 
   // tmux
   tmuxSessionPrefix: 'cc-',
+
+  // AI summaries via DeepSeek (OpenAI-compatible API)
+  deepseekApiKey: process.env.DEEPSEEK_API_KEY || '',
+  deepseekBaseUrl: 'https://api.deepseek.com/v1',
+  deepseekModel: 'deepseek-chat',
+
+  // Auto-approve permissions: tool names that get silently approved
+  autoApproveTools: (process.env.CC_AUTO_APPROVE_TOOLS || 'Read,Glob,Grep,WebFetch,WebSearch,LS').split(',').map(t => t.trim()).filter(Boolean),
+  // Auto-approve Bash: commands matching this prefix pattern are silently approved
+  autoApproveBashPattern: '^(ls|ll|find|tree|cat|head|tail|wc|grep|rg|git\\s+(status|log|diff|show|branch|stash\\s+list|remote\\s+-v)|ps|df|du|free|uname|hostname|echo|pwd|which|date|printenv|env)(\\s|$)',
 };
 
 // Ensure data directory exists

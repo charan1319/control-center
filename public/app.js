@@ -10,10 +10,15 @@ let termWs = null;
 let term = null;
 let fitAddon = null;
 
+let serverInfo = { serverCwd: null };
+let previewCache = new Map();  // session_id → { text, fetchedAt }
+let summaryCache = new Map();  // session_id → { summary, fetchedAt }
+
 // ──────────────────────────────────────────────
 // DOM references
 // ──────────────────────────────────────────────
 
+const summaryBar = document.getElementById('summary-bar');
 const sessionsGrid = document.getElementById('sessions-grid');
 const eventsList = document.getElementById('events-list');
 const terminalPanel = document.getElementById('terminal-panel');
@@ -69,6 +74,9 @@ function connectDashboardWS() {
       recentEvents = msg.recentEvents || [];
       renderSessions();
       renderEvents();
+      // Fetch previews and summaries on initial load
+      refreshPreviews();
+      refreshSummaries();
       return;
     }
 
@@ -128,26 +136,71 @@ function renderSessionCard(s) {
   const isSelected = s.session_id === selectedSessionId;
   const safeId = escapeHtml(s.session_id);
   const isStopped = s.status === 'stopped';
+
+  // Session age
+  const age = s.created_at ? timeAgo(s.created_at) : '';
+  const toolCount = s.tool_count || 0;
+
+  // Transcript preview + AI summary (from caches)
+  const preview = previewCache.get(s.session_id)?.text || '';
+  const summary = summaryCache.get(s.session_id)?.summary || '';
+
+  // Kill button: protect server's own directory from accidental kill
+  const isServerSession = serverInfo.serverCwd && s.cwd === serverInfo.serverCwd;
+  const showKill = !isStopped || !!s.tmux_target;
+  const killBtn = showKill
+    ? `<button class="btn-kill-session${isServerSession ? ' btn-kill-protected' : ''}" data-id="${safeId}" title="${isServerSession ? 'Warning: this is the control center session' : 'Kill session'}">Kill</button>`
+    : '';
+
+  // Grant button: only on waiting sessions that have a linked tmux target
+  const grantBtn = (statusClass === 'waiting' && s.tmux_target)
+    ? `<button class="btn-grant" data-id="${safeId}" title="Approve permission request">✓ Grant</button>`
+    : '';
+
   return `
     <div class="session-card status-${statusClass} ${isSelected ? 'selected' : ''}" data-id="${safeId}">
       <div class="card-header">
         <span class="indicator ${statusClass}"></span>
         <span class="card-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
+        ${age ? `<span class="card-age">${escapeHtml(age)}</span>` : ''}
       </div>
-      <div class="card-status">${statusText}</div>
+      <div class="card-meta-row">
+        <span class="card-status">${statusText}</span>
+        ${toolCount ? `<span class="card-tool-count">${toolCount} tool${toolCount !== 1 ? 's' : ''}</span>` : ''}
+      </div>
       ${detail ? `<div class="card-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</div>` : ''}
+      ${preview ? `<div class="card-preview" title="${escapeHtml(preview)}">${escapeHtml(preview)}</div>` : ''}
+      ${summary ? `<div class="card-summary">${escapeHtml(summary)}</div>` : ''}
       <div class="card-actions">
+        ${grantBtn}
         ${s.tmux_target
           ? `<button class="btn-connect" data-id="${safeId}">Terminal</button>`
           : `<button class="btn-link-tmux" data-id="${safeId}">Link tmux</button>`}
         <button class="btn-edit-session" data-id="${safeId}">Edit</button>
-        ${(!isStopped || !!s.tmux_target) ? `<button class="btn-kill-session" data-id="${safeId}">Kill</button>` : ''}
+        ${killBtn}
       </div>
     </div>
   `;
 }
 
 function renderSessions() {
+  // Update summary bar
+  const activeCount = sessions.filter(s => getStatusClass(s) === 'active').length;
+  const waitingCount = sessions.filter(s => getStatusClass(s) === 'waiting').length;
+  const idleCount = sessions.filter(s => getStatusClass(s) === 'idle').length;
+  if (sessions.length > 0) {
+    summaryBar.innerHTML = `
+      <span class="sum-item sum-active">${activeCount} active</span>
+      <span class="sum-sep">·</span>
+      <span class="sum-item sum-waiting">${waitingCount} waiting</span>
+      <span class="sum-sep">·</span>
+      <span class="sum-item sum-idle">${idleCount} idle</span>
+    `;
+    summaryBar.classList.remove('hidden');
+  } else {
+    summaryBar.classList.add('hidden');
+  }
+
   if (sessions.length === 0) {
     sessionsGrid.innerHTML = '<div class="no-sessions">No sessions yet. Start Claude Code in a tmux pane, or click "+ New Session".</div>';
     return;
@@ -201,6 +254,31 @@ function renderSessions() {
   sessionsGrid.innerHTML = html;
 
   // Attach click handlers
+  sessionsGrid.querySelectorAll('.btn-grant').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      btn.disabled = true;
+      btn.textContent = '…';
+      try {
+        const res = await fetchWithTimeout(`/api/sessions/${encodeURIComponent(btn.dataset.id)}/input`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: '1' }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          alert(`Grant failed: ${body.error || 'Unknown error'}`);
+          btn.disabled = false;
+          btn.textContent = '✓ Grant';
+        }
+      } catch {
+        alert('Grant failed: network error');
+        btn.disabled = false;
+        btn.textContent = '✓ Grant';
+      }
+    });
+  });
+
   sessionsGrid.querySelectorAll('.btn-connect').forEach(btn => {
     btn.addEventListener('click', (e) => { e.stopPropagation(); openTerminal(btn.dataset.id); });
   });
@@ -218,7 +296,11 @@ function renderSessions() {
       e.stopPropagation();
       const s = sessions.find(s => s.session_id === btn.dataset.id);
       const name = s?.label || btn.dataset.id.slice(0, 8);
-      if (!confirm(`Kill session "${name}"? This will stop the tmux session.`)) return;
+      const isProtected = serverInfo.serverCwd && s?.cwd === serverInfo.serverCwd;
+      const msg = isProtected
+        ? `"${name}" is running in the control center directory.\nKilling it will end this Claude Code session (not the server itself).\nContinue?`
+        : `Kill session "${name}"? This will stop the tmux session.`;
+      if (!confirm(msg)) return;
       try {
         const res = await fetchWithTimeout(`/api/sessions/${encodeURIComponent(btn.dataset.id)}/kill`, { method: 'POST' });
         if (!res.ok) {
@@ -301,7 +383,12 @@ function getStatusText(session) {
 }
 
 function getDetailText(session) {
-  if (session.last_tool) return session.last_tool;
+  if (session.last_tool) {
+    // Try to get the last tool_input from recent events for richer display
+    const ev = recentEvents.find(e => e.session_id === session.session_id && e.tool_name === session.last_tool);
+    if (ev) return getEventDetail(ev);
+    return session.last_tool;
+  }
   if (session.cwd) return session.cwd;
   return '';
 }
@@ -316,16 +403,18 @@ function renderEvents() {
     return;
   }
 
-  eventsList.innerHTML = recentEvents.slice(0, 100).map(ev => {
+  const rows = recentEvents.slice(0, 100).map(ev => {
     const time = ev.created_at || ev.timestamp || '';
     const timeStr = time ? formatTime(time) : '--:--';
     // session_cwd comes from init (DB JOIN alias), cwd from broadcast events
     const label = ev.label || ev.session_cwd || ev.cwd || ev.session_id?.slice(0, 8) || '?';
     const detail = getEventDetail(ev);
     const isPermission = ev.event === 'PermissionRequest';
+    const s = sessions.find(s => s.session_id === ev.session_id);
+    const clickable = !!s?.tmux_target;
 
     return `
-      <div class="event-row ${isPermission ? 'permission-request' : ''}">
+      <div class="event-row ${isPermission ? 'permission-request' : ''} ${clickable ? 'clickable' : ''}" data-session-id="${escapeHtml(ev.session_id || '')}">
         <span class="ev-time">${timeStr}</span>
         <span class="ev-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
         <span class="ev-event ${escapeHtml(ev.event)}">${escapeHtml(ev.event)}</span>
@@ -333,6 +422,15 @@ function renderEvents() {
       </div>
     `;
   }).join('');
+
+  eventsList.innerHTML = rows;
+
+  eventsList.querySelectorAll('.event-row.clickable').forEach(row => {
+    row.addEventListener('click', () => {
+      const s = sessions.find(s => s.session_id === row.dataset.sessionId);
+      if (s?.tmux_target) openTerminal(s.session_id);
+    });
+  });
 }
 
 function getEventDetail(ev) {
@@ -696,7 +794,53 @@ terminalContainer.addEventListener('wheel', (e) => {
 }, { passive: false, capture: true });
 
 // ──────────────────────────────────────────────
+// Server info, transcript previews, AI summaries
+// ──────────────────────────────────────────────
+
+async function fetchServerInfo() {
+  try {
+    const res = await fetchWithTimeout('/api/info');
+    if (res.ok) serverInfo = await res.json();
+  } catch { /* non-critical */ }
+}
+
+async function refreshPreviews() {
+  const active = sessions.filter(s => s.status !== 'stopped' && s.transcript !== null);
+  for (const s of active) {
+    try {
+      const res = await fetchWithTimeout(`/api/sessions/${encodeURIComponent(s.session_id)}/preview`);
+      if (res.ok) {
+        const { text } = await res.json();
+        if (text) previewCache.set(s.session_id, { text, fetchedAt: Date.now() });
+      }
+    } catch { /* non-critical */ }
+  }
+  renderSessions();
+}
+
+async function refreshSummaries() {
+  const active = sessions.filter(s => s.status !== 'stopped');
+  for (const s of active) {
+    const cached = summaryCache.get(s.session_id);
+    if (cached && Date.now() - cached.fetchedAt < 85_000) continue;
+    try {
+      const res = await fetchWithTimeout(`/api/sessions/${encodeURIComponent(s.session_id)}/summary`);
+      if (res.ok) {
+        const { summary } = await res.json();
+        if (summary) summaryCache.set(s.session_id, { summary, fetchedAt: Date.now() });
+      }
+    } catch { /* non-critical */ }
+  }
+  renderSessions();
+}
+
+// ──────────────────────────────────────────────
 // Boot
 // ──────────────────────────────────────────────
 
+fetchServerInfo();
 connectDashboardWS();
+
+// Refresh previews every 20s, summaries every 90s
+setInterval(refreshPreviews, 20_000);
+setInterval(refreshSummaries, 90_000);

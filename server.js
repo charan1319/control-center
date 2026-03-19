@@ -5,13 +5,130 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, basename } from 'node:path';
 import { hostname } from 'node:os';
 import { execFileSync, execSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, openSync, closeSync, readSync, fstatSync } from 'node:fs';
 import config from './config.js';
 import * as db from './db.js';
 import * as ptyManager from './pty-manager.js';
 import * as notifier from './notifier.js';
 
 const PROJECTS_PATH = join(dirname(fileURLToPath(import.meta.url)), 'data', 'projects.json');
+
+// ──────────────────────────────────────────────
+// Transcript helpers
+// ──────────────────────────────────────────────
+
+function readTranscriptTail(filePath, maxBytes = 32768) {
+  const turns = [];
+  try {
+    const fd = openSync(filePath, 'r');
+    try {
+      const { size } = fstatSync(fd);
+      if (size === 0) return turns;
+      const readSize = Math.min(maxBytes, size);
+      const buf = Buffer.allocUnsafe(readSize);
+      readSync(fd, buf, 0, readSize, size - readSize);
+      const lines = buf.toString('utf8').split('\n');
+      const startIdx = size > maxBytes ? 1 : 0; // skip potentially incomplete first line
+      for (let i = startIdx; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        try {
+          const obj = JSON.parse(line);
+          if (obj.type === 'user' || obj.type === 'assistant') turns.push(obj);
+        } catch { /* malformed line */ }
+      }
+    } finally {
+      closeSync(fd);
+    }
+  } catch { /* file may not exist yet */ }
+  return turns;
+}
+
+function getLastAssistantText(filePath) {
+  const turns = readTranscriptTail(filePath, 16384);
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].type !== 'assistant') continue;
+    const content = turns[i].message?.content;
+    if (!Array.isArray(content)) continue;
+    const textBlock = content.find(b => b.type === 'text');
+    if (textBlock?.text?.trim()) return textBlock.text.trim().slice(0, 300);
+  }
+  return null;
+}
+
+// ──────────────────────────────────────────────
+// AI summary (DeepSeek)
+// ──────────────────────────────────────────────
+
+const summaryCache = new Map(); // session_id → { summary, generatedAt }
+
+async function generateSummary(transcript) {
+  const turns = readTranscriptTail(transcript, 32768);
+  if (turns.length === 0) return null;
+
+  const messages = [];
+  for (const turn of turns.slice(-20)) {
+    const role = turn.type === 'user' ? 'user' : 'assistant';
+    const c = turn.message?.content;
+    let content = '';
+    if (typeof c === 'string') {
+      content = c;
+    } else if (Array.isArray(c)) {
+      content = c.map(b => {
+        if (b.type === 'text') return b.text;
+        if (b.type === 'tool_use') return `[${b.name}: ${JSON.stringify(b.input || {}).slice(0, 80)}]`;
+        return '';
+      }).filter(Boolean).join(' ');
+    }
+    if (content.trim()) messages.push({ role, content: content.slice(0, 600) });
+  }
+  if (messages.length === 0) return null;
+
+  const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.deepseekApiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.deepseekModel,
+      messages: [
+        {
+          role: 'system',
+          content: 'You monitor AI coding sessions. Given the recent conversation, write 2-3 terse sentences: (1) what task is being worked on, (2) current status/what just happened, (3) whether user input is needed. Be specific. No headers.',
+        },
+        ...messages,
+      ],
+      max_tokens: 120,
+      temperature: 0.2,
+    }),
+    signal: AbortSignal.timeout(10000),
+  });
+
+  if (!response.ok) throw new Error(`DeepSeek API error: ${response.status}`);
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content?.trim() || null;
+}
+
+// ──────────────────────────────────────────────
+// Auto-approve permissions
+// ──────────────────────────────────────────────
+
+function shouldAutoApprove(payload) {
+  const toolName = payload.tool_name || '';
+  if (config.autoApproveTools.includes(toolName)) return true;
+
+  if (toolName === 'Bash' && config.autoApproveBashPattern) {
+    try {
+      const input = typeof payload.tool_input === 'string'
+        ? JSON.parse(payload.tool_input)
+        : (payload.tool_input || {});
+      const command = (input.command || '').trimStart();
+      if (command && new RegExp(config.autoApproveBashPattern).test(command)) return true;
+    } catch { /* ignore */ }
+  }
+  return false;
+}
 
 function readProjects() {
   try { return JSON.parse(readFileSync(PROJECTS_PATH, 'utf8')); } catch { return []; }
@@ -172,11 +289,25 @@ export async function buildServer(opts = {}) {
       }
     }
 
-    // 2. Update session status
+    // 2. Update session status (with auto-approve logic for PermissionRequest)
+    let autoApproved = false;
     if (event === 'Stop') {
       db.updateStatus(session_id, 'stopped');
     } else if (event === 'PermissionRequest') {
-      db.updateStatus(session_id, 'waiting_permission');
+      if (shouldAutoApprove(payload)) {
+        const sess = db.getSession(session_id);
+        if (sess?.tmux_target && /^[a-zA-Z0-9_-]+$/.test(sess.tmux_target)) {
+          try {
+            const buf = `cc-ap-${Date.now()}`;
+            execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: '1\n', timeout: 5_000 });
+            execFileSync('tmux', ['paste-buffer', '-t', sess.tmux_target, '-b', buf, '-d'], { timeout: 5_000 });
+            autoApproved = true;
+          } catch { /* auto-approve failed — fall through to normal waiting */ }
+        }
+      }
+      if (!autoApproved) {
+        db.updateStatus(session_id, 'waiting_permission');
+      }
     }
 
     // 3. Handle heartbeats (lightweight — skip event log)
@@ -213,7 +344,8 @@ export async function buildServer(opts = {}) {
 
     // 6. Notify via OpenClaw for high-priority events, but only if the session
     // has been idle for 30+ seconds (skip when the user is actively watching).
-    if (event === 'Stop' || event === 'PermissionRequest') {
+    // Also skip auto-approved permissions — they resolved silently.
+    if (!autoApproved && (event === 'Stop' || event === 'PermissionRequest')) {
       const lastHb = session?.last_heartbeat;
       const msAgo = lastHb
         ? Date.now() - new Date(lastHb.replace(' ', 'T') + 'Z').getTime()
@@ -340,6 +472,45 @@ export async function buildServer(opts = {}) {
     broadcastSessionUpdate(updated);
     return reply.status(204).send();
   });
+
+  // ──────────────────────────────────────────────
+  // REST: Transcript preview (last assistant text)
+  // ──────────────────────────────────────────────
+
+  fastify.get('/api/sessions/:id/preview', async (request, reply) => {
+    const session = db.getSession(request.params.id);
+    if (!session?.transcript) return reply.status(404).send({ error: 'No transcript' });
+    const text = getLastAssistantText(session.transcript);
+    return { text };
+  });
+
+  // ──────────────────────────────────────────────
+  // REST: AI summary (DeepSeek, 90s cache)
+  // ──────────────────────────────────────────────
+
+  fastify.get('/api/sessions/:id/summary', async (request, reply) => {
+    const session = db.getSession(request.params.id);
+    if (!session) return reply.status(404).send({ error: 'Session not found' });
+    if (!config.deepseekApiKey || !session.transcript) return { summary: null };
+
+    const cached = summaryCache.get(request.params.id);
+    if (cached && Date.now() - cached.generatedAt < 90_000) return { summary: cached.summary };
+
+    try {
+      const summary = await generateSummary(session.transcript);
+      if (summary) summaryCache.set(request.params.id, { summary, generatedAt: Date.now() });
+      return { summary: summary || null };
+    } catch (err) {
+      fastify.log.warn(`Summary generation failed for ${request.params.id}: ${err.message}`);
+      return { summary: null };
+    }
+  });
+
+  // ──────────────────────────────────────────────
+  // REST: Server info (used by frontend for protection logic)
+  // ──────────────────────────────────────────────
+
+  fastify.get('/api/info', async () => ({ serverCwd: __dirname }));
 
   // ──────────────────────────────────────────────
   // REST: Events
