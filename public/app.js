@@ -79,12 +79,6 @@ function connectDashboardWS() {
       // Fetch previews and summaries on initial load
       refreshPreviews();
       refreshSummaries();
-      // If notification click opened the app with a session URL param, open that session
-      const urlSession = new URLSearchParams(location.search).get('session');
-      if (urlSession && sessions.find(s => s.session_id === urlSession)) {
-        history.replaceState(null, '', '/');
-        openTerminal(urlSession);
-      }
       return;
     }
 

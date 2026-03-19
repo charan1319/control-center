@@ -24,17 +24,11 @@ self.addEventListener('push', e => {
 // Focus or open the app when notification is clicked
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  const targetUrl = e.notification.data?.url || '/';
   e.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
       const existing = list.find(c => c.url.includes(self.location.origin));
-      if (existing) {
-        existing.focus();
-        // Navigate the existing window to the session URL if needed
-        if (targetUrl !== '/') existing.navigate(targetUrl);
-        return;
-      }
-      return clients.openWindow(targetUrl);
+      if (existing) return existing.focus();
+      return clients.openWindow('/');
     })
   );
 });
