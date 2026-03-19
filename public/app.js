@@ -813,20 +813,34 @@ document.getElementById('btn-manage-templates').addEventListener('click', () => 
   openTemplatesModal();
 });
 
-// "Save as template" — pre-fills template form from current modal values
-document.getElementById('btn-save-template').addEventListener('click', () => {
+// "Save as template" — saves current modal settings immediately after asking for a name
+document.getElementById('btn-save-template').addEventListener('click', async () => {
+  const label = document.getElementById('ns-label').value.trim();
+  const name = prompt('Template name:', label || '');
+  if (!name?.trim()) return;
   const presetVal = nsCwdPreset.value;
   const cwd = (presetVal === '__custom__' || !presetVal)
     ? document.getElementById('ns-cwd').value.trim()
     : presetVal;
-  openTemplateForm(null, {
-    label: document.getElementById('ns-label').value.trim(),
-    cwd,
-    prompt: document.getElementById('ns-prompt').value.trim(),
-    autoApprove: document.getElementById('ns-auto-approve').value,
-  });
-  document.getElementById('new-session-modal').close();
-  openTemplatesModal();
+  try {
+    await fetchWithTimeout('/api/templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name.trim(),
+        label,
+        cwd,
+        project: presetVal && presetVal !== '__custom__'
+          ? (projectPresets.find(p => p.cwd === presetVal)?.name || '')
+          : '',
+        autoApprove: document.getElementById('ns-auto-approve').value,
+        prompt: document.getElementById('ns-prompt').value.trim(),
+      }),
+    });
+    await loadTemplates();
+  } catch (err) {
+    alert(`Failed to save template: ${err.message}`);
+  }
 });
 
 function openTemplatesModal() {
