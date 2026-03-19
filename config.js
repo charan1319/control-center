@@ -33,6 +33,9 @@ const config = {
   // Auto-approve permissions: tool names that get silently approved
   autoApproveTools: (process.env.CC_AUTO_APPROVE_TOOLS || 'Read,Glob,Grep,WebFetch,WebSearch,LS').split(',').map(t => t.trim()).filter(Boolean),
 
+  // Session cleanup: auto-delete stopped sessions older than N days (0 = disabled)
+  sessionCleanupDays: parseInt(process.env.CC_SESSION_CLEANUP_DAYS || '7', 10),
+
   // Web Push (PWA notifications) — requires HTTPS (Tailscale Serve)
   vapidPublicKey: process.env.VAPID_PUBLIC_KEY || '',
   vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || '',

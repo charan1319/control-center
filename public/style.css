@@ -159,6 +159,18 @@ button.primary:active { opacity: 0.75; }
 .session-card .card-status { font-size: 12px; color: var(--text-secondary); }
 .session-card .card-tool-count { font-size: 11px; color: var(--text-muted); }
 .session-card .card-detail { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-card .card-pending-detail {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--orange) 30%, transparent);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
 .session-card .card-preview {
   font-size: 12px;
   color: var(--text-secondary);

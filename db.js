@@ -28,6 +28,8 @@ db.exec(`
 // Safe migration — ALTER TABLE is ignored if the column already exists
 try { db.exec(`ALTER TABLE sessions ADD COLUMN project TEXT`); } catch { /* already exists */ }
 try { db.exec(`ALTER TABLE sessions ADD COLUMN auto_approve INTEGER DEFAULT 1`); } catch { /* already exists */ }
+try { db.exec(`ALTER TABLE sessions ADD COLUMN pending_tool TEXT`); } catch { /* already exists */ }
+try { db.exec(`ALTER TABLE sessions ADD COLUMN pending_tool_input TEXT`); } catch { /* already exists */ }
 
 db.exec(`
 
@@ -223,6 +225,29 @@ export function getActiveSessions() {
 
 export function ensureSession(session_id) {
   return stmts.ensureSession.run({ session_id });
+}
+
+const setPendingStmt = db.prepare(`
+  UPDATE sessions SET pending_tool = @tool, pending_tool_input = @input, updated_at = datetime('now')
+  WHERE session_id = @session_id
+`);
+export function setPendingPermission(session_id, tool, input) {
+  setPendingStmt.run({ session_id, tool: tool || null, input: input ? (typeof input === 'string' ? input : JSON.stringify(input)) : null });
+}
+
+const clearPendingStmt = db.prepare(`
+  UPDATE sessions SET pending_tool = NULL, pending_tool_input = NULL, updated_at = datetime('now')
+  WHERE session_id = @session_id
+`);
+export function clearPendingPermission(session_id) {
+  clearPendingStmt.run({ session_id });
+}
+
+const cleanupStmt = db.prepare(`
+  DELETE FROM sessions WHERE status = 'stopped' AND updated_at < datetime('now', @offset)
+`);
+export function deleteStoppedSessionsOlderThan(days) {
+  return cleanupStmt.run({ offset: `-${days} days` });
 }
 
 // ── Push subscriptions ──────────────────────────

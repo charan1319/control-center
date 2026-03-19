@@ -94,7 +94,7 @@ function connectDashboardWS() {
       if (msg.session.session_id === selectedSessionId) {
         terminalTitle.textContent = msg.session.label || msg.session.session_id.slice(0, 12);
       }
-      renderSessions();
+      scheduleRenderSessions();
       return;
     }
 
@@ -110,20 +110,40 @@ function connectDashboardWS() {
           if (s.status !== 'stopped' && s.status !== 'waiting_permission') {
             s.status = 'active';
           }
-          renderSessions();
+          scheduleRenderSessions();
         }
         return;
       }
 
       recentEvents.unshift(msg);
       if (recentEvents.length > 200) recentEvents.length = 200;
-      renderEvents();
+      scheduleRenderEvents();
       // Do NOT update session.status here — the server always follows up with a
       // session_update message that carries the authoritative DB status.
       // Mutating status client-side from event names caused wrong border colors
       // (e.g. Stop was setting 'stopped' even though the server now sets 'active').
     }
   };
+}
+
+// ──────────────────────────────────────────────
+// Batched rendering — schedule with rAF so multiple WS messages
+// arriving in the same frame only cause one DOM rebuild
+// ──────────────────────────────────────────────
+
+let _sessionsRafPending = false;
+let _eventsRafPending = false;
+
+function scheduleRenderSessions() {
+  if (_sessionsRafPending) return;
+  _sessionsRafPending = true;
+  requestAnimationFrame(() => { _sessionsRafPending = false; renderSessions(); });
+}
+
+function scheduleRenderEvents() {
+  if (_eventsRafPending) return;
+  _eventsRafPending = true;
+  requestAnimationFrame(() => { _eventsRafPending = false; renderEvents(); });
 }
 
 // ──────────────────────────────────────────────
@@ -160,6 +180,11 @@ function renderSessionCard(s) {
     ? `<button class="btn-grant" data-id="${safeId}" title="Approve permission request">✓ Grant</button>`
     : '';
 
+  // Pending permission context — what is Claude asking to do?
+  const pendingDetail = (statusClass === 'waiting' && s.pending_tool)
+    ? formatToolDetail(s.pending_tool, s.pending_tool_input)
+    : '';
+
   return `
     <div class="session-card status-${statusClass} ${isSelected ? 'selected' : ''}" data-id="${safeId}">
       <div class="card-header">
@@ -171,7 +196,8 @@ function renderSessionCard(s) {
         <span class="card-status">${statusText}</span>
         ${toolCount ? `<span class="card-tool-count">${toolCount} tool${toolCount !== 1 ? 's' : ''}</span>` : ''}
       </div>
-      ${detail ? `<div class="card-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</div>` : ''}
+      ${pendingDetail ? `<div class="card-pending-detail" title="${escapeHtml(pendingDetail)}">${escapeHtml(pendingDetail)}</div>` : ''}
+      ${!pendingDetail && detail ? `<div class="card-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</div>` : ''}
       ${preview ? `<div class="card-preview"><span class="card-preview-label">Claude</span>${escapeHtml(preview)}</div>` : ''}
       ${summary ? `<div class="card-summary">${escapeHtml(summary)}</div>` : ''}
       <div class="card-actions">
@@ -878,7 +904,7 @@ function escapeHtml(str) {
 // Auto-refresh heartbeat ages every 15s
 // ──────────────────────────────────────────────
 
-setInterval(() => renderSessions(), 15_000);
+setInterval(scheduleRenderSessions, 15_000);
 
 // ──────────────────────────────────────────────
 // Terminal scroll: intercept mouse wheel to scroll the xterm viewport
@@ -939,7 +965,7 @@ async function refreshPreviews() {
       }
     } catch { /* non-critical */ }
   }
-  renderSessions();
+  scheduleRenderSessions();
 }
 
 async function refreshSummaries() {
@@ -956,7 +982,7 @@ async function refreshSummaries() {
       }
     } catch { /* non-critical */ }
   }
-  renderSessions();
+  scheduleRenderSessions();
 }
 
 // ──────────────────────────────────────────────

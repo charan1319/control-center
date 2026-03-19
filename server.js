@@ -288,6 +288,7 @@ export async function buildServer(opts = {}) {
           const cur = db.getSession(sessionId);
           if (cur?.status === 'waiting_permission') {
             db.updateStatus(sessionId, 'active');
+            db.clearPendingPermission(sessionId);
             const updated = db.getSession(sessionId);
             if (updated) broadcastSessionUpdate(updated);
           }
@@ -375,6 +376,7 @@ export async function buildServer(opts = {}) {
       }
       if (!autoApproved) {
         db.updateStatus(session_id, 'waiting_permission');
+        db.setPendingPermission(session_id, payload.tool_name, payload.tool_input);
       }
     }
 
@@ -599,6 +601,7 @@ export async function buildServer(opts = {}) {
 
     // Update status and broadcast
     db.updateStatus(sid, 'active');
+    db.clearPendingPermission(sid);
     const updated = db.getSession(sid);
     broadcastSessionUpdate(updated);
 
@@ -757,6 +760,18 @@ const isMainModule = process.argv[1] && import.meta.url === pathToFileURL(proces
 
 if (isMainModule) {
   const server = await buildServer();
+
+  // Auto-cleanup: delete stopped sessions older than configured days
+  if (config.sessionCleanupDays > 0) {
+    const runCleanup = () => {
+      const result = db.deleteStoppedSessionsOlderThan(config.sessionCleanupDays);
+      if (result.changes > 0) {
+        console.log(`[cleanup] Deleted ${result.changes} stopped session(s) older than ${config.sessionCleanupDays} days`);
+      }
+    };
+    runCleanup(); // run once on startup
+    setInterval(runCleanup, 24 * 60 * 60 * 1000); // then daily
+  }
 
   // Graceful shutdown: kill PTY bridges, close DB
   const closeGracefully = async (signal) => {
