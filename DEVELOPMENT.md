@@ -38,16 +38,8 @@ The core product is complete and in daily use. The server runs manually in a tmu
 
 ### High priority
 
-- [ ] **Systemd auto-start** — server currently requires manual `npm start` in a tmux pane.
-  Add `~/.config/systemd/user/control-center.service` so it starts on login and restarts on crash.
-  Template:
-  ```ini
-  [Service]
-  WorkingDirectory=/home/zapperz/Charan/control-center
-  ExecStart=/home/zapperz/.nvm/versions/node/v22.22.1/bin/node --env-file=.env server.js
-  Restart=on-failure
-  Environment=PATH=/home/zapperz/.nvm/versions/node/v22.22.1/bin:/usr/local/bin:/usr/bin:/bin
-  ```
+- [x] **Systemd auto-start** — `~/.config/systemd/user/control-center.service` created and enabled.
+  Server starts automatically on WSL boot and restarts on crash. No manual `npm start` needed.
 
 - [ ] **Session cleanup** — stopped sessions accumulate in the DB indefinitely.
   Options: auto-delete after N days, or a manual "Clear all stopped" button in the UI.

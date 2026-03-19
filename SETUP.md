@@ -149,7 +149,7 @@ On phone: install the Tailscale app (iOS/Android), sign in with the same account
 
 ---
 
-## 8. Optional: auto-start on login (systemd)
+## 8. Auto-start on login (systemd)
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -174,6 +174,22 @@ systemctl --user daemon-reload
 systemctl --user enable --now control-center.service
 systemctl --user status control-center.service
 ```
+
+## 9. Prevent Windows from sleeping
+
+Run this once from WSL to disable system sleep and hibernate on both AC and battery:
+
+```bash
+powershell.exe -Command "
+  powercfg /change standby-timeout-ac 0
+  powercfg /change standby-timeout-dc 0
+  powercfg /change hibernate-timeout-ac 0
+  powercfg /change hibernate-timeout-dc 0
+"
+```
+
+This persists across reboots (Windows power plan setting).
+To re-enable sleep later: replace `0` with a timeout in minutes (e.g. `30`).
 
 ---
 
