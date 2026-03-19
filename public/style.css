@@ -370,7 +370,10 @@ dialog select {
 
 @media (max-width: 640px) {
   .project-sessions { grid-template-columns: 1fr; }
-  .session-card { min-height: unset; }
+  /* Compact session cards on mobile */
+  .session-card { min-height: unset; padding: 12px; gap: 4px; }
+  .session-card .card-header { margin-bottom: 4px; }
+  .session-card .card-preview { display: none; }
   /* Touch targets: ensure all buttons are at least 40px tall */
   button { min-height: 40px; padding: 8px 14px; }
   .session-card .card-actions button { min-height: 36px; font-size: 12px; padding: 6px 10px; }
@@ -381,10 +384,12 @@ dialog select {
   .event-row { grid-template-columns: 55px 80px 1fr; }
   .event-row .ev-detail { display: none; }
   #terminal-panel { margin: 0 8px 12px; }
-  #sessions-panel, #events-panel { padding-left: 8px; padding-right: 8px; }
-  #header { padding: 10px 12px; }
-  #header h1 { font-size: 15px; }
-  /* On mobile, event col shows time + event name + label (truncated) */
+  #sessions-panel { padding-left: 8px; padding-right: 8px; }
+  #events-panel { display: none; }
+  #header { padding: 8px 12px; }
+  #header h1 { font-size: 14px; }
+  /* Sessions grid has less padding on mobile */
+  #sessions-grid { padding: 10px 8px; }
 }
 
 /* Very small screens: hide quick buttons to give text input more space */

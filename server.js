@@ -17,10 +17,10 @@ if (config.pushEnabled) {
   webpush.setVapidDetails(config.vapidEmail, config.vapidPublicKey, config.vapidPrivateKey);
 }
 
-async function sendPushNotification(title, body, tag = 'cc') {
+async function sendPushNotification(title, body, tag = 'cc', url = '/') {
   if (!config.pushEnabled) return;
   const subscriptions = db.getAllPushSubscriptions();
-  const payload = JSON.stringify({ title, body, tag });
+  const payload = JSON.stringify({ title, body, tag, url });
   await Promise.all(subscriptions.map(async sub => {
     try {
       await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload);
@@ -427,6 +427,7 @@ export async function buildServer(opts = {}) {
           `Permission needed — ${label}`,
           `Tool: ${payload.tool_name || 'unknown'}`,
           `permission-${session_id}`,
+          `/?session=${encodeURIComponent(session_id)}`,
         ).catch(() => {});
       }
     }

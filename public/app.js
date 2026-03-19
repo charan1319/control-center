@@ -77,6 +77,12 @@ function connectDashboardWS() {
       // Fetch previews and summaries on initial load
       refreshPreviews();
       refreshSummaries();
+      // If notification click opened the app with a session URL param, open that session
+      const urlSession = new URLSearchParams(location.search).get('session');
+      if (urlSession && sessions.find(s => s.session_id === urlSession)) {
+        history.replaceState(null, '', '/');
+        openTerminal(urlSession);
+      }
       return;
     }
 
@@ -506,7 +512,7 @@ function openTerminal(sessionId) {
   // The CDN exposes Terminal as a global from @xterm/xterm
   term = new Terminal({
     fontFamily: '"Fira Code", "Cascadia Code", "JetBrains Mono", "SF Mono", monospace',
-    fontSize: 14,
+    fontSize: window.innerWidth < 640 ? 12 : 14,
     theme: {
       background: '#1e1e2e',
       foreground: '#cdd6f4',
@@ -533,6 +539,10 @@ function openTerminal(sessionId) {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (fitAddon) fitAddon.fit();
     if (term) term.focus();
+    // On mobile, scroll the terminal into view so user doesn't have to scroll manually
+    if (window.innerWidth < 900) {
+      terminalPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }));
 
   // Connect WebSocket to terminal relay
