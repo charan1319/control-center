@@ -41,6 +41,10 @@ The core product is complete and in daily use. The server runs manually in a tmu
 - [x] **Systemd auto-start** — `~/.config/systemd/user/control-center.service` created and enabled.
   Server starts automatically on WSL boot and restarts on crash. No manual `npm start` needed.
 
+- [x] **Windows auto-start** — `wsl-services.vbs` placed in Windows Startup folder fires WSL + all
+  user services (control-center + openclaw) silently at login. Windows auto-login configured via
+  `netplwiz` so the full chain runs on power-cycle with no manual intervention.
+
 - [ ] **Session cleanup** — stopped sessions accumulate in the DB indefinitely.
   Options: auto-delete after N days, or a manual "Clear all stopped" button in the UI.
   The stopped sessions section is already collapsed, so it's not urgent.

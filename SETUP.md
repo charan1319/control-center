@@ -193,6 +193,30 @@ To re-enable sleep later: replace `0` with a timeout in minutes (e.g. `30`).
 
 ---
 
+## 10. Windows auto-start on reboot (no login required)
+
+Two pieces: a Windows auto-login so the machine logs in unattended, and a Startup folder
+script that silently starts WSL and all services.
+
+**Step 1 — Enable Windows auto-login (one-time, on the PC):**
+1. Press Win+R → type `netplwiz` → Enter
+2. Select your user → uncheck "Users must enter a username and password"
+3. Click OK → enter your Windows password → OK
+
+**Step 2 — The startup script** is already installed at:
+`C:\Users\zapperz\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\wsl-services.vbs`
+
+It silently runs `wsl.exe` at login, which starts WSL and triggers all enabled systemd user
+services (control-center + openclaw-gateway) via `~/.config/wsl-startup.sh`.
+
+**Full restart flow:**
+```
+PC powers on → Windows auto-login → Startup script fires → WSL starts →
+20s settle → control-center.service up → openclaw-gateway.service up → done
+```
+
+**To disable auto-login later:** Win+R → `netplwiz` → recheck the password checkbox.
+
 ## 9. Daily GitHub backup (systemd timer)
 
 A systemd timer pushes all three repos to GitHub at 6am daily:
