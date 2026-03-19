@@ -366,7 +366,9 @@ export async function buildServer(opts = {}) {
       }
     } else if (event === 'PermissionRequest') {
       const sess = db.getSession(session_id);
-      if (shouldAutoApprove(payload, sess)) {
+      const willAutoApprove = shouldAutoApprove(payload, sess);
+      console.log(`[perm] session=${session_id.slice(0, 8)} tool=${payload.tool_name || '(none)'} mode=${sess?.auto_approve ?? 1} auto=${willAutoApprove}`);
+      if (willAutoApprove) {
         autoApproved = true;
         // Claude Code shows the TUI permission prompt AFTER the hook exits, so we
         // can't paste immediately (the TUI isn't there yet). Schedule a delayed paste

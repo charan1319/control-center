@@ -560,6 +560,9 @@ function openTerminal(sessionId) {
     term.loadAddon(new WebLinksAddon.WebLinksAddon());
   } catch { /* addon may not have loaded */ }
 
+  // Clear any leftover DOM from a previous terminal instance (defensive — xterm
+  // dispose() should remove its elements, but this ensures a clean slate).
+  terminalContainer.innerHTML = '';
   term.open(terminalContainer);
 
   // Double rAF: the first rAF fires before the browser has finished laying out
@@ -614,7 +617,10 @@ function connectTerminalWs(sessionId) {
 
   let tmuxExited = false;
   termWs.onmessage = (e) => {
-    if (!term) return;
+    // Guard: ignore messages if the user has switched to a different session.
+    // Without this, queued messages from the old WebSocket (which is being closed
+    // asynchronously) could write into the new session's terminal.
+    if (!term || selectedSessionId !== sessionId) return;
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
     if (msg.type === 'output') {
