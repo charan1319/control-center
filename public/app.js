@@ -129,7 +129,7 @@ function renderSessionCard(s) {
   const safeId = escapeHtml(s.session_id);
   const isStopped = s.status === 'stopped';
   return `
-    <div class="session-card ${isSelected ? 'selected' : ''}" data-id="${safeId}">
+    <div class="session-card status-${statusClass} ${isSelected ? 'selected' : ''}" data-id="${safeId}">
       <div class="card-header">
         <span class="indicator ${statusClass}"></span>
         <span class="card-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
@@ -141,7 +141,7 @@ function renderSessionCard(s) {
           ? `<button class="btn-connect" data-id="${safeId}">Terminal</button>`
           : `<button class="btn-link-tmux" data-id="${safeId}">Link tmux</button>`}
         <button class="btn-edit-session" data-id="${safeId}">Edit</button>
-        ${!isStopped ? `<button class="btn-kill-session" data-id="${safeId}">Kill</button>` : ''}
+        ${(!isStopped || !!s.tmux_target) ? `<button class="btn-kill-session" data-id="${safeId}">Kill</button>` : ''}
       </div>
     </div>
   `;
@@ -153,32 +153,51 @@ function renderSessions() {
     return;
   }
 
-  // Group by project; sessions with no project go under '' (rendered ungrouped)
-  const byProject = {};
-  for (const s of sessions) {
-    const group = s.project || '';
-    if (!byProject[group]) byProject[group] = [];
-    byProject[group].push(s);
-  }
-
-  // Named projects alphabetically, ungrouped last
-  const groups = Object.keys(byProject).sort((a, b) => {
-    if (!a) return 1;
-    if (!b) return -1;
-    return a.localeCompare(b);
-  });
+  const active = sessions.filter(s => s.status !== 'stopped');
+  const stopped = sessions
+    .filter(s => s.status === 'stopped')
+    .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
 
   let html = '';
-  for (const group of groups) {
-    if (group) {
-      html += `<div class="project-group">
-        <div class="project-heading">${escapeHtml(group)}</div>
-        <div class="project-sessions">${byProject[group].map(renderSessionCard).join('')}</div>
-      </div>`;
-    } else {
-      html += `<div class="project-sessions">${byProject[group].map(renderSessionCard).join('')}</div>`;
+
+  // Active sessions grouped by project
+  if (active.length > 0) {
+    const byProject = {};
+    for (const s of active) {
+      const group = s.project || '';
+      if (!byProject[group]) byProject[group] = [];
+      byProject[group].push(s);
     }
+    const groups = Object.keys(byProject).sort((a, b) => {
+      if (!a) return 1;
+      if (!b) return -1;
+      return a.localeCompare(b);
+    });
+    for (const group of groups) {
+      if (group) {
+        html += `<div class="project-group">
+          <div class="project-heading">${escapeHtml(group)}</div>
+          <div class="project-sessions">${byProject[group].map(renderSessionCard).join('')}</div>
+        </div>`;
+      } else {
+        html += `<div class="project-sessions">${byProject[group].map(renderSessionCard).join('')}</div>`;
+      }
+    }
+  } else {
+    html += '<div class="no-sessions">No active sessions. Click "+ New Session" to start one.</div>';
   }
+
+  // Stopped sessions — collapsible section at the bottom, most recent first
+  if (stopped.length > 0) {
+    html += `
+      <details class="stopped-section">
+        <summary class="stopped-heading">Closed Sessions (${stopped.length})</summary>
+        <div class="project-sessions stopped-sessions">
+          ${stopped.map(renderSessionCard).join('')}
+        </div>
+      </details>`;
+  }
+
   sessionsGrid.innerHTML = html;
 
   // Attach click handlers
@@ -456,6 +475,8 @@ function handleWindowResize() {
 const nsCwdPreset = document.getElementById('ns-cwd-preset');
 const nsCwdCustom = document.getElementById('ns-cwd');
 
+let projectPresets = [];
+
 nsCwdPreset.addEventListener('change', () => {
   if (nsCwdPreset.value === '__custom__') {
     nsCwdCustom.classList.remove('hidden');
@@ -469,11 +490,12 @@ nsCwdPreset.addEventListener('change', () => {
 async function loadProjectPresets() {
   try {
     const res = await fetchWithTimeout('/api/projects');
-    const projects = await res.json();
-    nsCwdPreset.innerHTML = projects.map(p =>
-      `<option value="${escapeHtml(p.cwd)}">${escapeHtml(p.name)} — ${escapeHtml(p.cwd)}</option>`
+    projectPresets = await res.json();
+    nsCwdPreset.innerHTML = projectPresets.map(p =>
+      `<option value="${escapeHtml(p.cwd)}">${escapeHtml(p.name)}</option>`
     ).join('') + '<option value="__custom__">Custom path…</option>';
   } catch {
+    projectPresets = [];
     nsCwdPreset.innerHTML = '<option value="__custom__">Custom path…</option>';
     nsCwdCustom.classList.remove('hidden');
   }
@@ -482,9 +504,6 @@ async function loadProjectPresets() {
 }
 
 document.getElementById('btn-new-session').addEventListener('click', async () => {
-  // Populate project datalist from known session projects
-  const knownProjects = [...new Set(sessions.map(s => s.project).filter(Boolean))];
-  document.getElementById('ns-project-list').innerHTML = knownProjects.map(p => `<option value="${escapeHtml(p)}">`).join('');
   await loadProjectPresets();
   newSessionModal.showModal();
 });
@@ -497,11 +516,14 @@ document.getElementById('btn-cancel-modal').addEventListener('click', () => {
 document.getElementById('btn-launch').addEventListener('click', async () => {
   const launchBtn = document.getElementById('btn-launch');
   const label = document.getElementById('ns-label').value.trim();
-  const project = document.getElementById('ns-project').value.trim();
   const presetVal = document.getElementById('ns-cwd-preset').value;
   const cwd = (presetVal === '__custom__' || !presetVal)
     ? document.getElementById('ns-cwd').value.trim()
     : presetVal;
+  // Derive project name from the selected preset (empty for custom path)
+  const project = (presetVal && presetVal !== '__custom__')
+    ? (projectPresets.find(p => p.cwd === presetVal)?.name || undefined)
+    : undefined;
   const initialPrompt = document.getElementById('ns-prompt').value.trim();
 
   if (!label) {
@@ -526,7 +548,6 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
     newSessionModal.close();
     // Reset fields
     document.getElementById('ns-label').value = '';
-    document.getElementById('ns-project').value = '';
     document.getElementById('ns-cwd').value = '';
     document.getElementById('ns-cwd-preset').selectedIndex = 0;
     document.getElementById('ns-prompt').value = '';
@@ -544,6 +565,15 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
 
 let linkTargetSessionId = null;
 
+async function linkTmuxTarget(sessionId, tmuxName) {
+  const res = await fetchWithTimeout(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tmux_target: tmuxName }),
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+}
+
 async function showLinkTmuxModal(sessionId) {
   linkTargetSessionId = sessionId;
   let tmuxSessions;
@@ -555,6 +585,21 @@ async function showLinkTmuxModal(sessionId) {
     return;
   }
 
+  // Auto-link if exactly one tmux session matches this session's CWD
+  const session = sessions.find(s => s.session_id === sessionId);
+  if (session?.cwd) {
+    const matches = tmuxSessions.filter(ts => ts.cwd === session.cwd);
+    if (matches.length === 1) {
+      try {
+        await linkTmuxTarget(sessionId, matches[0].name);
+      } catch (err) {
+        alert(`Failed to link tmux session: ${err.message}`);
+      }
+      return; // no modal needed
+    }
+  }
+
+  // Fall back to picker
   if (tmuxSessions.length === 0) {
     tmuxSessionList.innerHTML = '<div style="color: var(--text-muted); padding: 12px;">No tmux sessions found. Create one with: tmux new-session -d -s cc-0</div>';
   } else {
@@ -568,12 +613,7 @@ async function showLinkTmuxModal(sessionId) {
     tmuxSessionList.querySelectorAll('.tmux-option').forEach(opt => {
       opt.addEventListener('click', async () => {
         try {
-          const res = await fetchWithTimeout(`/api/sessions/${encodeURIComponent(linkTargetSessionId)}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tmux_target: opt.dataset.name }),
-          });
-          if (!res.ok) throw new Error((await res.json()).error);
+          await linkTmuxTarget(linkTargetSessionId, opt.dataset.name);
         } catch (err) {
           alert(`Failed to link tmux session: ${err.message}`);
         }
@@ -646,11 +686,14 @@ setInterval(() => renderSessions(), 15_000);
 // cursor-up/down key presses into the running Claude Code session).
 // ──────────────────────────────────────────────
 
+// capture: true ensures this fires before xterm's own wheel handler,
+// which in application/alternate-screen mode converts scroll to cursor keys.
 terminalContainer.addEventListener('wheel', (e) => {
   if (!term) return;
   e.preventDefault();
+  e.stopPropagation();
   term.scrollLines(e.deltaY > 0 ? 3 : -3);
-}, { passive: false });
+}, { passive: false, capture: true });
 
 // ──────────────────────────────────────────────
 // Boot

@@ -5,7 +5,15 @@ set -euo pipefail
 
 INPUT=$(cat)
 
-PAYLOAD=$(echo "$INPUT" | jq -c '{
+# If running inside tmux, capture the session name for unambiguous linking
+TMUX_SESSION_NAME=""
+if [ -n "${TMUX:-}" ]; then
+  TMUX_SESSION_NAME=$(tmux display-message -p '#S' 2>/dev/null || true)
+fi
+
+PAYLOAD=$(echo "$INPUT" | jq -c \
+  --arg tmux_session "$TMUX_SESSION_NAME" \
+  '{
   event: .hook_event_name,
   session_id: .session_id,
   cwd: .cwd,
@@ -16,7 +24,8 @@ PAYLOAD=$(echo "$INPUT" | jq -c '{
   source: (.source // null),
   model: (.model // null),
   stop_hook_active: (.stop_hook_active // false),
-  timestamp: (now | todate)
+  timestamp: (now | todate),
+  tmux_session: (if $tmux_session != "" then $tmux_session else null end)
 }' 2>/dev/null) || { echo "cc-report: jq parse failed" >&2; exit 0; }
 
 curl -sS --max-time 5 \

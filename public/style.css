@@ -90,8 +90,14 @@ button.primary:hover { opacity: 0.9; }
   cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
-.session-card:hover { border-color: var(--accent); }
+.session-card.status-active  { border-color: var(--green);  box-shadow: 0 0 0 1px var(--green); }
+.session-card.status-idle    { border-color: var(--border); }
+.session-card.status-waiting { border-color: var(--red);    box-shadow: 0 0 0 1px var(--red); animation: pulse-border 1.5s infinite; }
+.session-card.status-stopped { border-color: var(--border); }
+.session-card:hover  { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .session-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+@keyframes pulse-border { 0%, 100% { box-shadow: 0 0 0 1px var(--red); } 50% { box-shadow: 0 0 6px 1px var(--red); } }
 
 .session-card .card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .session-card .card-header .indicator { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
@@ -111,6 +117,33 @@ button.primary:hover { opacity: 0.9; }
 .session-card .btn-kill-session:hover { background: rgba(243, 139, 168, 0.15); }
 
 .no-sessions { color: var(--text-muted); font-size: 14px; text-align: center; padding: 40px 20px; }
+
+.stopped-section { margin-top: 8px; }
+.stopped-section > summary {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 6px 2px;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.stopped-section > summary::-webkit-details-marker { display: none; }
+.stopped-section > summary::before {
+  content: '▶';
+  font-size: 9px;
+  transition: transform 0.15s;
+  display: inline-block;
+}
+.stopped-section[open] > summary::before { transform: rotate(90deg); }
+.stopped-sessions { margin-top: 10px; }
+.stopped-sessions .session-card { opacity: 0.5; }
+.stopped-sessions .session-card:hover { opacity: 0.8; border-color: var(--border); }
 
 #terminal-panel {
   margin: 0 20px 16px;

@@ -2,7 +2,8 @@ import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import fastifyWebSocket from '@fastify/websocket';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, basename } from 'node:path';
+import { hostname } from 'node:os';
 import { execFileSync, execSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import config from './config.js';
@@ -149,14 +150,22 @@ export async function buildServer(opts = {}) {
         transcript: payload.transcript_path,
       });
       // Auto-link tmux target by matching cwd, and apply any pending label from launch
+      // Prefer the tmux session name reported by the hook (unambiguous),
+      // fall back to CWD matching when Claude Code is not running inside tmux.
       const tmuxSessions = ptyManager.listTmuxSessions();
-      const match = tmuxSessions.find(ts => ts.cwd === payload.cwd);
+      const match = payload.tmux_session
+        ? tmuxSessions.find(ts => ts.name === payload.tmux_session)
+        : tmuxSessions.find(ts => ts.cwd === payload.cwd);
       if (match) {
         const pending = pendingLabels.get(match.name);
         const validPending = pending && (Date.now() - pending.createdAt < PENDING_LABEL_TTL_MS);
+        const existing = db.getSession(session_id);
+        const defaultLabel = (!existing?.label && !validPending)
+          ? `${hostname()}:${basename(payload.cwd || process.env.HOME || '~')}`
+          : undefined;
         db.updateSession(session_id, {
           tmux_target: match.name,
-          label: validPending ? pending.label : undefined,
+          label: validPending ? pending.label : defaultLabel,
           project: validPending ? pending.project : undefined,
         });
         if (pending) pendingLabels.delete(match.name);
