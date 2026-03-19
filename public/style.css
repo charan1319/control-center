@@ -364,7 +364,30 @@ dialog select {
   border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
 }
 .hidden { display: none !important; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+
+/* Template picker row in New Session modal */
+.template-row-inner { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.template-row-inner select { flex: 1; margin-top: 0; }
+.btn-text {
+  background: none; border: none; color: var(--accent);
+  font-size: 12px; padding: 0 4px; min-height: unset;
+  cursor: pointer; white-space: nowrap;
+}
+.btn-text:hover { text-decoration: underline; }
+
+/* Template list in Templates modal */
+#templates-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; max-height: 40vh; overflow-y: auto; }
+.template-item {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 12px;
+  display: flex; align-items: center; gap: 10px;
+}
+.template-item-name { font-weight: 600; font-size: 13px; flex: 1; }
+.template-item-meta { font-size: 11px; color: var(--text-muted); }
+.template-item-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.template-item-actions button { font-size: 12px; padding: 4px 10px; min-height: unset; }
+#template-edit-form h3 { font-size: 14px; margin-bottom: 14px; color: var(--text-secondary); }
 
 .tmux-option {
   padding: 10px;

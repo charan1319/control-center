@@ -36,6 +36,7 @@ async function sendPushNotification(title, body, tag = 'cc', url = '/') {
 }
 
 const PROJECTS_PATH = join(dirname(fileURLToPath(import.meta.url)), 'data', 'projects.json');
+const TEMPLATES_PATH = join(dirname(fileURLToPath(import.meta.url)), 'data', 'templates.json');
 
 // ──────────────────────────────────────────────
 // Transcript helpers
@@ -170,6 +171,13 @@ function shouldAutoApprove(payload, session) {
 
 function readProjects() {
   try { return JSON.parse(readFileSync(PROJECTS_PATH, 'utf8')); } catch { return []; }
+}
+
+function readTemplates() {
+  try { return JSON.parse(readFileSync(TEMPLATES_PATH, 'utf8')); } catch { return []; }
+}
+function writeTemplates(templates) {
+  writeFileSync(TEMPLATES_PATH, JSON.stringify(templates, null, 2) + '\n');
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -712,6 +720,56 @@ export async function buildServer(opts = {}) {
     }
     writeFileSync(PROJECTS_PATH, JSON.stringify(projects, null, 2) + '\n');
     return projects;
+  });
+
+  // ──────────────────────────────────────────────
+  // REST: Session templates (stored in data/templates.json)
+  // ──────────────────────────────────────────────
+
+  fastify.get('/api/templates', async () => readTemplates());
+
+  fastify.post('/api/templates', async (request, reply) => {
+    const { name, label, cwd, project, autoApprove, prompt } = request.body || {};
+    if (!name || typeof name !== 'string' || name.length > 128) {
+      return reply.status(400).send({ error: 'name is required (max 128 chars)' });
+    }
+    const templates = readTemplates();
+    const t = {
+      id: Date.now().toString(36),
+      name: name.trim(),
+      label: (label || '').trim(),
+      cwd: (cwd || '').trim(),
+      project: (project || '').trim(),
+      autoApprove: autoApprove || 'full',
+      prompt: (prompt || '').trim(),
+    };
+    templates.push(t);
+    writeTemplates(templates);
+    return reply.status(201).send(t);
+  });
+
+  fastify.put('/api/templates/:id', async (request, reply) => {
+    const { name, label, cwd, project, autoApprove, prompt } = request.body || {};
+    const templates = readTemplates();
+    const idx = templates.findIndex(t => t.id === request.params.id);
+    if (idx === -1) return reply.status(404).send({ error: 'Template not found' });
+    if (name !== undefined) templates[idx].name = name.trim();
+    if (label !== undefined) templates[idx].label = label.trim();
+    if (cwd !== undefined) templates[idx].cwd = cwd.trim();
+    if (project !== undefined) templates[idx].project = project.trim();
+    if (autoApprove !== undefined) templates[idx].autoApprove = autoApprove;
+    if (prompt !== undefined) templates[idx].prompt = prompt.trim();
+    writeTemplates(templates);
+    return templates[idx];
+  });
+
+  fastify.delete('/api/templates/:id', async (request, reply) => {
+    const templates = readTemplates();
+    const idx = templates.findIndex(t => t.id === request.params.id);
+    if (idx === -1) return reply.status(404).send({ error: 'Template not found' });
+    templates.splice(idx, 1);
+    writeTemplates(templates);
+    return reply.status(204).send();
   });
 
   // ──────────────────────────────────────────────

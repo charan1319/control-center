@@ -704,7 +704,8 @@ async function loadProjectPresets() {
 }
 
 document.getElementById('btn-new-session').addEventListener('click', async () => {
-  await loadProjectPresets();
+  await Promise.all([loadProjectPresets(), loadTemplates()]);
+  nsTemplate.value = '';
   newSessionModal.showModal();
 });
 
@@ -761,6 +762,168 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
     launchBtn.textContent = 'Launch';
   }
 });
+
+// ──────────────────────────────────────────────
+// Session templates
+// ──────────────────────────────────────────────
+
+let templates = [];
+const nsTemplate = document.getElementById('ns-template');
+const templatesModal = document.getElementById('templates-modal');
+const templatesList = document.getElementById('templates-list');
+const templateEditForm = document.getElementById('template-edit-form');
+const templatesModalFooter = document.getElementById('templates-modal-footer');
+
+async function loadTemplates() {
+  try {
+    const res = await fetchWithTimeout('/api/templates');
+    templates = await res.json();
+  } catch { templates = []; }
+  renderTemplateSelect();
+}
+
+function renderTemplateSelect() {
+  nsTemplate.innerHTML = '<option value="">— No template —</option>' +
+    templates.map(t => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}</option>`).join('');
+}
+
+function applyTemplate(id) {
+  const t = templates.find(t => t.id === id);
+  if (!t) return;
+  document.getElementById('ns-label').value = t.label || '';
+  document.getElementById('ns-prompt').value = t.prompt || '';
+  // Set auto-approve
+  const aa = document.getElementById('ns-auto-approve');
+  aa.value = t.autoApprove || 'full';
+  // Set CWD preset
+  if (t.cwd) {
+    const opt = [...nsCwdPreset.options].find(o => o.value === t.cwd);
+    if (opt) {
+      nsCwdPreset.value = t.cwd;
+      nsCwdCustom.classList.add('hidden');
+    } else {
+      nsCwdPreset.value = '__custom__';
+      document.getElementById('ns-cwd').value = t.cwd;
+      nsCwdCustom.classList.remove('hidden');
+    }
+  }
+}
+
+nsTemplate.addEventListener('change', () => {
+  if (nsTemplate.value) applyTemplate(nsTemplate.value);
+});
+
+document.getElementById('btn-manage-templates').addEventListener('click', () => {
+  document.getElementById('new-session-modal').close();
+  openTemplatesModal();
+});
+
+// "Save as template" — pre-fills template form from current modal values
+document.getElementById('btn-save-template').addEventListener('click', () => {
+  const presetVal = nsCwdPreset.value;
+  const cwd = (presetVal === '__custom__' || !presetVal)
+    ? document.getElementById('ns-cwd').value.trim()
+    : presetVal;
+  openTemplateForm(null, {
+    label: document.getElementById('ns-label').value.trim(),
+    cwd,
+    prompt: document.getElementById('ns-prompt').value.trim(),
+    autoApprove: document.getElementById('ns-auto-approve').value,
+  });
+  document.getElementById('new-session-modal').close();
+  openTemplatesModal();
+});
+
+function openTemplatesModal() {
+  renderTemplateList();
+  templateEditForm.classList.add('hidden');
+  templatesModalFooter.classList.remove('hidden');
+  templatesModal.showModal();
+}
+
+function renderTemplateList() {
+  if (templates.length === 0) {
+    templatesList.innerHTML = '<p style="color:var(--text-muted);font-size:13px">No templates yet. Create one to quickly reuse session configs.</p>';
+    return;
+  }
+  templatesList.innerHTML = templates.map(t => `
+    <div class="template-item" data-id="${escapeHtml(t.id)}">
+      <div class="template-item-name">${escapeHtml(t.name)}</div>
+      <div class="template-item-meta">${[t.cwd, t.autoApprove].filter(Boolean).join(' · ')}</div>
+      <div class="template-item-actions">
+        <button class="btn-template-edit" data-id="${escapeHtml(t.id)}">Edit</button>
+        <button class="btn-template-delete" data-id="${escapeHtml(t.id)}">Delete</button>
+      </div>
+    </div>
+  `).join('');
+
+  templatesList.querySelectorAll('.btn-template-edit').forEach(btn => {
+    btn.addEventListener('click', () => openTemplateForm(btn.dataset.id));
+  });
+  templatesList.querySelectorAll('.btn-template-delete').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this template?')) return;
+      await fetchWithTimeout(`/api/templates/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+      await loadTemplates();
+      renderTemplateList();
+    });
+  });
+}
+
+let editingTemplateId = null;
+
+function openTemplateForm(id, prefill = {}) {
+  editingTemplateId = id || null;
+  const t = id ? templates.find(t => t.id === id) : prefill;
+  document.getElementById('template-form-title').textContent = id ? 'Edit Template' : 'New Template';
+  document.getElementById('te-name').value = t?.name || '';
+  document.getElementById('te-label').value = t?.label || '';
+  document.getElementById('te-cwd').value = t?.cwd || '';
+  document.getElementById('te-project').value = t?.project || '';
+  document.getElementById('te-auto-approve').value = t?.autoApprove || 'full';
+  document.getElementById('te-prompt').value = t?.prompt || '';
+  templatesList.classList.add('hidden');
+  templatesModalFooter.classList.add('hidden');
+  templateEditForm.classList.remove('hidden');
+}
+
+document.getElementById('btn-new-template').addEventListener('click', () => openTemplateForm(null));
+
+document.getElementById('btn-template-form-cancel').addEventListener('click', () => {
+  templateEditForm.classList.add('hidden');
+  templatesList.classList.remove('hidden');
+  templatesModalFooter.classList.remove('hidden');
+});
+
+document.getElementById('btn-template-form-save').addEventListener('click', async () => {
+  const body = {
+    name: document.getElementById('te-name').value.trim(),
+    label: document.getElementById('te-label').value.trim(),
+    cwd: document.getElementById('te-cwd').value.trim(),
+    project: document.getElementById('te-project').value.trim(),
+    autoApprove: document.getElementById('te-auto-approve').value,
+    prompt: document.getElementById('te-prompt').value.trim(),
+  };
+  if (!body.name) { alert('Template name is required'); return; }
+  try {
+    if (editingTemplateId) {
+      await fetchWithTimeout(`/api/templates/${encodeURIComponent(editingTemplateId)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+    } else {
+      await fetchWithTimeout('/api/templates', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+    }
+    await loadTemplates();
+    templateEditForm.classList.add('hidden');
+    templatesList.classList.remove('hidden');
+    templatesModalFooter.classList.remove('hidden');
+    renderTemplateList();
+  } catch (err) { alert(`Failed to save: ${err.message}`); }
+});
+
+document.getElementById('btn-close-templates').addEventListener('click', () => templatesModal.close());
 
 // ──────────────────────────────────────────────
 // Link tmux modal
