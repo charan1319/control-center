@@ -112,14 +112,10 @@ function connectDashboardWS() {
       recentEvents.unshift(msg);
       if (recentEvents.length > 200) recentEvents.length = 200;
       renderEvents();
-
-      const s = sessions.find(s => s.session_id === msg.session_id);
-      if (s) {
-        if (msg.event === 'Stop') s.status = 'stopped';
-        else if (msg.event === 'PermissionRequest') s.status = 'waiting_permission';
-        else if (msg.event === 'SessionStart') s.status = 'active';
-        renderSessions();
-      }
+      // Do NOT update session.status here — the server always follows up with a
+      // session_update message that carries the authoritative DB status.
+      // Mutating status client-side from event names caused wrong border colors
+      // (e.g. Stop was setting 'stopped' even though the server now sets 'active').
     }
   };
 }
