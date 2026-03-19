@@ -123,7 +123,7 @@ button.primary:active { opacity: 0.75; }
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px;
+  padding: 16px 16px 16px 19px;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
@@ -132,6 +132,16 @@ button.primary:active { opacity: 0.75; }
   display: flex;
   flex-direction: column;
   gap: 5px;
+  position: relative;
+}
+/* Project color accent — left edge stripe */
+.session-card::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--project-color, transparent);
+  border-radius: var(--radius) 0 0 var(--radius);
 }
 .session-card:active { transform: scale(0.98); opacity: 0.9; }
 .session-card.status-active  { border-color: var(--green);  box-shadow: 0 0 0 1px var(--green); }
@@ -168,6 +178,14 @@ button.primary:active { opacity: 0.75; }
   line-height: 1.4;
   border-left: 2px solid var(--bg-overlay);
   padding-left: 8px;
+}
+.session-card .card-preview-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 5px;
 }
 .session-card .card-summary {
   font-size: 11.5px;
@@ -308,7 +326,9 @@ button.primary:active { opacity: 0.75; }
 .event-row .ev-event.Stop { color: var(--text-muted); }
 .event-row .ev-event.PermissionRequest { color: var(--orange); }
 .event-row .ev-event.Notification { color: var(--accent); }
+.event-row .ev-event.AutoApproved { color: var(--text-muted); }
 .event-row.permission-request { background: rgba(250, 179, 135, 0.08); }
+.event-row.auto-approved { opacity: 0.5; }
 .event-row.clickable { cursor: pointer; transition: background 0.1s; -webkit-tap-highlight-color: transparent; }
 .event-row.clickable:hover { background: rgba(137, 180, 250, 0.07); }
 

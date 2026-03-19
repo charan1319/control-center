@@ -404,6 +404,7 @@ export async function buildServer(opts = {}) {
       cwd: payload.cwd,
       timestamp: payload.timestamp,
       label: session?.label,
+      auto_approved: autoApproved || undefined,
     });
     if (session) broadcastSessionUpdate(session);
 

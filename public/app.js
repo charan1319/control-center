@@ -9,7 +9,6 @@ let ws = null;
 let termWs = null;
 let term = null;
 let fitAddon = null;
-let _wheelAccum = 0;
 
 let serverInfo = { serverCwd: null };
 let previewCache = new Map();  // session_id → { text, fetchedAt }
@@ -142,6 +141,10 @@ function renderSessionCard(s) {
   const preview = previewCache.get(s.session_id)?.text || '';
   const summary = summaryCache.get(s.session_id)?.summary || '';
 
+  // Project color accent
+  const pColor = projectColor(s.project);
+  const colorStyle = pColor ? ` style="--project-color:${pColor}"` : '';
+
   // Kill button: protect server's own directory from accidental kill
   const isServerSession = serverInfo.serverCwd && s.cwd === serverInfo.serverCwd;
   const showKill = !isStopped || !!s.tmux_target;
@@ -155,7 +158,7 @@ function renderSessionCard(s) {
     : '';
 
   return `
-    <div class="session-card status-${statusClass} ${isSelected ? 'selected' : ''}" data-id="${safeId}">
+    <div class="session-card status-${statusClass} ${isSelected ? 'selected' : ''}" data-id="${safeId}"${colorStyle}>
       <div class="card-header">
         <span class="indicator ${statusClass}"></span>
         <span class="card-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
@@ -166,7 +169,7 @@ function renderSessionCard(s) {
         ${toolCount ? `<span class="card-tool-count">${toolCount} tool${toolCount !== 1 ? 's' : ''}</span>` : ''}
       </div>
       ${detail ? `<div class="card-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</div>` : ''}
-      ${preview ? `<div class="card-preview" title="${escapeHtml(preview)}">${escapeHtml(preview)}</div>` : ''}
+      ${preview ? `<div class="card-preview"><span class="card-preview-label">Claude</span>${escapeHtml(preview)}</div>` : ''}
       ${summary ? `<div class="card-summary">${escapeHtml(summary)}</div>` : ''}
       <div class="card-actions">
         ${grantBtn}
@@ -379,12 +382,41 @@ function getStatusText(session) {
   return `Stopped${session.updated_at ? ' · ' + timeAgo(session.updated_at) : ''}`;
 }
 
+// Deterministic color from project name — Catppuccin Mocha palette
+const PROJECT_COLORS = ['#cba6f7','#89b4fa','#a6e3a1','#fab387','#f38ba8','#f9e2af','#89dceb','#b4befe'];
+function projectColor(name) {
+  if (!name) return null;
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (Math.imul(31, h) + name.charCodeAt(i)) | 0;
+  return PROJECT_COLORS[Math.abs(h) % PROJECT_COLORS.length];
+}
+
+const TOOL_ICONS = {
+  Bash: '⚡', Edit: '✏️', Write: '✏️', MultiEdit: '✏️', NotebookEdit: '✏️',
+  Read: '👁', Glob: '👁', Grep: '🔍', LS: '📁',
+  WebFetch: '🌐', WebSearch: '🌐',
+};
+
+function formatToolDetail(toolName, toolInput) {
+  const icon = TOOL_ICONS[toolName] || '⚙';
+  const fname = p => (p || '').split('/').pop() || p;
+  try {
+    const inp = typeof toolInput === 'string' ? JSON.parse(toolInput) : toolInput;
+    if (inp?.command) return `${icon} ${inp.command.trimStart().slice(0, 55)}`;
+    if (inp?.file_path) return `${icon} ${fname(inp.file_path)}`;
+    if (inp?.path) return `${icon} ${fname(inp.path)}`;
+    if (inp?.pattern) return `${icon} ${inp.pattern.slice(0, 45)}`;
+    if (inp?.query) return `${icon} ${inp.query.slice(0, 45)}`;
+    if (inp?.url) return `${icon} ${inp.url.slice(0, 45)}`;
+  } catch {}
+  return `${icon} ${toolName}`;
+}
+
 function getDetailText(session) {
   if (session.last_tool) {
-    // Try to get the last tool_input from recent events for richer display
     const ev = recentEvents.find(e => e.session_id === session.session_id && e.tool_name === session.last_tool);
-    if (ev) return getEventDetail(ev);
-    return session.last_tool;
+    if (ev) return formatToolDetail(ev.tool_name, ev.tool_input);
+    return `${TOOL_ICONS[session.last_tool] || '⚙'} ${session.last_tool}`;
   }
   if (session.cwd) return session.cwd;
   return '';
@@ -400,21 +432,29 @@ function renderEvents() {
     return;
   }
 
-  const rows = recentEvents.slice(0, 100).map(ev => {
+  const rows = recentEvents.filter(ev => ev.event !== 'Stop').slice(0, 100).map(ev => {
     const time = ev.created_at || ev.timestamp || '';
     const timeStr = time ? formatTime(time) : '--:--';
-    // session_cwd comes from init (DB JOIN alias), cwd from broadcast events
     const label = ev.label || ev.session_cwd || ev.cwd || ev.session_id?.slice(0, 8) || '?';
-    const detail = getEventDetail(ev);
+    const detail = ev.auto_approved ? formatToolDetail(ev.tool_name, ev.tool_input) : getEventDetail(ev);
     const isPermission = ev.event === 'PermissionRequest';
+    const isAutoApproved = !!ev.auto_approved;
     const s = sessions.find(s => s.session_id === ev.session_id);
     const clickable = !!s?.tmux_target;
 
+    const eventLabel = isAutoApproved ? 'auto-approved' : escapeHtml(ev.event);
+    const classes = [
+      'event-row',
+      isPermission && !isAutoApproved ? 'permission-request' : '',
+      isAutoApproved ? 'auto-approved' : '',
+      clickable ? 'clickable' : '',
+    ].filter(Boolean).join(' ');
+
     return `
-      <div class="event-row ${isPermission ? 'permission-request' : ''} ${clickable ? 'clickable' : ''}" data-session-id="${escapeHtml(ev.session_id || '')}">
+      <div class="${classes}" data-session-id="${escapeHtml(ev.session_id || '')}">
         <span class="ev-time">${timeStr}</span>
         <span class="ev-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
-        <span class="ev-event ${escapeHtml(ev.event)}">${escapeHtml(ev.event)}</span>
+        <span class="ev-event ${isAutoApproved ? 'AutoApproved' : escapeHtml(ev.event)}">${eventLabel}</span>
         <span class="ev-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</span>
       </div>
     `;
@@ -550,7 +590,6 @@ function closeTerminal(keepSelection) {
   if (termWs) { try { termWs.close(); } catch {} termWs = null; }
   if (term) { term.dispose(); term = null; }
   fitAddon = null;
-  _wheelAccum = 0;
   terminalPanel.classList.add('hidden');
   if (!keepSelection) {
     selectedSessionId = null;
@@ -844,10 +883,10 @@ terminalContainer.addEventListener('wheel', (e) => {
   if (!term) return;
   e.preventDefault();
   e.stopPropagation();
-  // Pixel mode (Mac trackpad): scale pixels to lines. 20px ≈ 1 line.
-  // Line/page mode (mouse wheel): use 3 lines per click.
+  // Pixel mode (Mac trackpad): 8px per line — responsive without being jumpy.
+  // Line/page mode (mouse wheel): 3 lines per click.
   const lines = e.deltaMode === 0
-    ? Math.round(e.deltaY / 20)
+    ? Math.round(e.deltaY / 8)
     : Math.sign(e.deltaY) * 3;
   if (lines !== 0) term.scrollLines(lines);
 }, { passive: false, capture: true });
