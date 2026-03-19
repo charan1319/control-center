@@ -104,10 +104,10 @@ function connectDashboardWS() {
         if (s) {
           s.last_tool = msg.tool_name;
           s.last_heartbeat = msg.timestamp || new Date().toISOString();
-          // Set active unless session is stopped — a heartbeat means a tool ran,
-          // so permission was granted (clears waiting_permission). But don't
-          // revive stopped sessions from stale heartbeats.
-          if (s.status !== 'stopped') {
+          // Only set active if not stopped or waiting for permission.
+          // A heartbeat can arrive from a previous tool while the next tool
+          // is still waiting for a PermissionRequest — don't clobber that.
+          if (s.status !== 'stopped' && s.status !== 'waiting_permission') {
             s.status = 'active';
           }
           renderSessions();

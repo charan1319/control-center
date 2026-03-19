@@ -348,10 +348,13 @@ export async function buildServer(opts = {}) {
     // 2. Update session status (with auto-approve logic for PermissionRequest)
     let autoApproved = false;
     if (event === 'Stop') {
-      // Stop fires at the end of each Claude turn, not just when the process exits.
-      // Set back to 'active' so the card stays visible; the 120s heartbeat age
-      // will naturally show it as 'idle'. Only the Kill API sets 'stopped'.
-      db.updateStatus(session_id, 'active');
+      // Stop fires at the end of each Claude turn, including when a turn is paused
+      // waiting for a PermissionRequest. Only set 'active' if we're not waiting —
+      // PermissionRequest may have already fired and set 'waiting_permission'.
+      const currentStatus = db.getSession(session_id)?.status;
+      if (currentStatus !== 'waiting_permission') {
+        db.updateStatus(session_id, 'active');
+      }
     } else if (event === 'PermissionRequest') {
       const sess = db.getSession(session_id);
       if (shouldAutoApprove(payload, sess)) {

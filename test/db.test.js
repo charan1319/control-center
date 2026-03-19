@@ -66,14 +66,14 @@ describe('db: sessions', () => {
     assert.equal(s, undefined);
   });
 
-  it('ensureSession transitions waiting_permission to active (permission was granted)', () => {
+  it('ensureSession does NOT override waiting_permission (heartbeat may be from a prior tool)', () => {
     db.upsertSession({ session_id: 'ensure-test', cwd: '/tmp', model: 'claude-sonnet-4-6', transcript: null });
     db.updateStatus('ensure-test', 'waiting_permission');
     assert.equal(db.getSession('ensure-test').status, 'waiting_permission');
 
-    // Heartbeat arrives → permission was granted → should set active
+    // Heartbeat arrives — should NOT clear waiting_permission (could be a prior tool's late heartbeat)
     db.ensureSession('ensure-test');
-    assert.equal(db.getSession('ensure-test').status, 'active');
+    assert.equal(db.getSession('ensure-test').status, 'waiting_permission');
     assert.equal(db.getSession('ensure-test').cwd, '/tmp'); // preserved
   });
 

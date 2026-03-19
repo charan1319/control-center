@@ -682,7 +682,7 @@ describe('Integration: Query parameter validation', () => {
 // Integration: Heartbeat does not override waiting_permission
 // ──────────────────────────────────────────────
 describe('Integration: Heartbeat status transitions', () => {
-  it('heartbeat after PermissionRequest transitions to active (permission granted)', async () => {
+  it('heartbeat after PermissionRequest does NOT clear waiting_permission', async () => {
     const sid = 'heartbeat-perm-test';
     await injectHook({ event: 'SessionStart', session_id: sid, cwd: '/tmp/hp' });
 
@@ -696,10 +696,10 @@ describe('Integration: Heartbeat status transitions', () => {
     let s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
     assert.equal(s.status, 'waiting_permission');
 
-    // Heartbeat arrives → means permission was granted and tool ran
+    // Heartbeat may arrive from a prior tool — must NOT clear waiting_permission
     await injectHook({ event: 'Heartbeat', session_id: sid, tool_name: 'Bash' });
     s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
-    assert.equal(s.status, 'active');
+    assert.equal(s.status, 'waiting_permission');
     assert.equal(s.last_tool, 'Bash');
   });
 

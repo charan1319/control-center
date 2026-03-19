@@ -136,16 +136,18 @@ const stmts = {
     LIMIT @limit
   `),
 
-  // Insert session only if it doesn't already exist, OR update status to 'active'
-  // if the session exists but isn't stopped. Used by the heartbeat handler to:
-  //   - Satisfy FK constraint when SessionStart was missed
-  //   - Transition 'waiting_permission' → 'active' (permission was granted, tool ran)
-  //   - NOT revive 'stopped' sessions from stale heartbeats
+  // Insert session only if it doesn't already exist. If it does exist, only
+  // set 'active' if the session isn't 'stopped' or 'waiting_permission'.
+  // A heartbeat means a tool completed, but it may be a previous tool's heartbeat
+  // arriving after a PermissionRequest for the next tool — don't clobber that.
   ensureSession: db.prepare(`
     INSERT INTO sessions (session_id, status, updated_at)
     VALUES (@session_id, 'active', datetime('now'))
     ON CONFLICT(session_id) DO UPDATE SET
-      status = CASE WHEN sessions.status = 'stopped' THEN sessions.status ELSE 'active' END,
+      status = CASE
+        WHEN sessions.status IN ('stopped', 'waiting_permission') THEN sessions.status
+        ELSE 'active'
+      END,
       updated_at = datetime('now')
   `),
 
