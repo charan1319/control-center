@@ -74,12 +74,10 @@ export function attach(tmuxTarget, socket) {
       scrollback: '',
     };
 
-    // Pipe PTY output → all connected WebSocket clients + scrollback buffer
+    // Pipe PTY output → all connected WebSocket clients + scrollback buffer.
+    // Concat + slice in one step avoids the buffer temporarily overshooting its limit.
     ptyProcess.onData((data) => {
-      entry.scrollback += data;
-      if (entry.scrollback.length > config.scrollbackBufferSize) {
-        entry.scrollback = entry.scrollback.slice(-config.scrollbackBufferSize);
-      }
+      entry.scrollback = (entry.scrollback + data).slice(-config.scrollbackBufferSize);
       const msg = JSON.stringify({ type: 'output', data });
       for (const client of entry.clients) {
         try {

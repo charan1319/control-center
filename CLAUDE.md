@@ -137,6 +137,7 @@ last_seen    TEXT    -- datetime('now') UTC
 | `POST` | `/api/sessions/:id/kill` | Kills tmux session + sets status = 'stopped' |
 | `GET` | `/api/sessions/:id/events` | `?limit=50&offset=0` — paginated session events |
 | `GET` | `/api/sessions/:id/preview` | Last assistant text block from transcript JSONL (`{text}`) |
+| `GET` | `/api/sessions/:id/terminal-capture` | tmux scrollback dump — up to 10k lines of plain text (`{text}`) |
 | `GET` | `/api/sessions/:id/summary` | AI-generated 2-3 sentence status summary via DeepSeek (`{summary}`), 90s server cache |
 
 ### Events, Projects, Info

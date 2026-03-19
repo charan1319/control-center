@@ -11,6 +11,12 @@ let term = null;
 let fitAddon = null;
 let termReconnectTimer = null;
 let termReconnectAttempts = 0;
+// Tracks which session's history fetch is in-flight (null = none).
+// Using session ID instead of a boolean prevents a race where session A's
+// finally-block clears the flag while session B's fetch is running.
+let historyFetchSessionId = null;
+let historyScrolledUp = false;
+let historyLastFailTime = 0; // timestamp of last failed auto-fetch (for cooldown)
 
 let serverInfo = { serverCwd: null };
 let previewCache = new Map();  // session_id → { text, fetchedAt }
@@ -398,8 +404,11 @@ function getStatusClass(session) {
   if (session.status === 'stopped') return 'stopped';
   if (session.status === 'active') {
     if (session.last_heartbeat) {
-      // SQLite datetime('now') produces UTC without T/Z. Normalize for Date parsing.
-      const ts = session.last_heartbeat.includes('T') ? session.last_heartbeat : session.last_heartbeat + 'Z';
+      // SQLite datetime('now') produces "YYYY-MM-DD HH:MM:SS" (space, no T/Z).
+      // Replace space with T and append Z so Date.parse() treats it as UTC on all browsers.
+      const ts = session.last_heartbeat.includes('T')
+        ? session.last_heartbeat
+        : session.last_heartbeat.replace(' ', 'T') + 'Z';
       const age = (Date.now() - new Date(ts).getTime()) / 1000;
       if (age > 120) return 'idle';
     }
@@ -525,6 +534,15 @@ function getEventDetail(ev) {
 function openTerminal(sessionId) {
   selectedSessionId = sessionId;
   renderSessions();
+
+  // Dismiss history view when switching to a different session.
+  // Clear content to prevent stale text flashing if auto-show fires quickly.
+  terminalHistory.classList.add('hidden');
+  terminalContainer.classList.remove('hidden');
+  terminalHistoryContent.textContent = '';
+  historyFetchSessionId = null;
+  historyScrolledUp = false;
+  historyLastFailTime = 0;
 
   // Tear down existing terminal resources without hiding the panel
   // (avoids a visual flicker from hide → immediate show)
@@ -655,6 +673,11 @@ function closeTerminal(keepSelection) {
   if (termWs) { try { termWs.close(); } catch {} termWs = null; }
   if (term) { term.dispose(); term = null; }
   fitAddon = null;
+  terminalHistory.classList.add('hidden');
+  terminalContainer.classList.remove('hidden');
+  terminalHistoryContent.textContent = '';
+  historyFetchSessionId = null;
+  historyScrolledUp = false;
   terminalPanel.classList.add('hidden');
   if (!keepSelection) {
     selectedSessionId = null;
@@ -663,7 +686,10 @@ function closeTerminal(keepSelection) {
 }
 
 function handleWindowResize() {
-  if (fitAddon && term) {
+  // Only fit when terminal container is actually visible. If the history panel
+  // is showing, terminalContainer has display:none — fitting it would resize
+  // xterm to 0 columns/rows. hideHistoryPanel() calls fit() when dismissing.
+  if (fitAddon && term && terminalHistory.classList.contains('hidden')) {
     try { fitAddon.fit(); } catch {}
   }
 }
@@ -1014,6 +1040,114 @@ document.getElementById('btn-cancel-link').addEventListener('click', () => {
 document.getElementById('btn-close-terminal').addEventListener('click', () => closeTerminal(false));
 
 // ──────────────────────────────────────────────
+// History panel — tmux scrollback capture
+// ──────────────────────────────────────────────
+
+const terminalHistory = document.getElementById('terminal-history');
+const terminalHistoryContent = document.getElementById('terminal-history-content');
+const terminalHistoryLabel = document.getElementById('terminal-history-label');
+
+function showHistoryPanel(text) {
+  historyScrolledUp = false;
+  terminalHistoryContent.textContent = text;
+  terminalContainer.classList.add('hidden');
+  terminalHistory.classList.remove('hidden');
+  // rAF ensures layout is calculated before scrolling to bottom
+  requestAnimationFrame(() => {
+    terminalHistoryContent.scrollTop = terminalHistoryContent.scrollHeight;
+  });
+}
+
+function hideHistoryPanel() {
+  historyScrolledUp = false;
+  terminalHistory.classList.add('hidden');
+  terminalContainer.classList.remove('hidden');
+  if (fitAddon) {
+    requestAnimationFrame(() => { if (fitAddon) fitAddon.fit(); });
+  }
+}
+
+// Auto-show history when user scrolls up while in alternate screen (TUI mode).
+// Silent — no loading indicator, no alert on failure.
+async function autoShowHistory() {
+  if (historyFetchSessionId || !selectedSessionId) return;
+  if (!terminalHistory.classList.contains('hidden')) return;
+  // Brief cooldown after a failed fetch — prevents rapid-fire requests if tmux is dead.
+  if (Date.now() - historyLastFailTime < 5000) return;
+  const capturedSessionId = selectedSessionId;
+  historyFetchSessionId = capturedSessionId;
+  try {
+    const res = await fetchWithTimeout(
+      `/api/sessions/${encodeURIComponent(capturedSessionId)}/terminal-capture`,
+    );
+    if (!res.ok) { historyLastFailTime = Date.now(); return; }
+    const { text } = await res.json();
+    // Abort if user switched sessions while fetch was in-flight
+    if (selectedSessionId !== capturedSessionId || !term) return;
+    const lineCount = (text.match(/\n/g) || []).length;
+    terminalHistoryLabel.textContent = `Scrollback history · ${lineCount.toLocaleString()} lines`;
+    showHistoryPanel(text);
+  } catch {
+    historyLastFailTime = Date.now();
+  } finally {
+    // Only clear if this fetch is still the active one. If the user switched
+    // sessions, openTerminal() already reset historyFetchSessionId to a new
+    // value — don't clobber it.
+    if (historyFetchSessionId === capturedSessionId) historyFetchSessionId = null;
+  }
+}
+
+document.getElementById('btn-history').addEventListener('click', async () => {
+  // Toggle: if history is already shown, go back to live
+  if (!terminalHistory.classList.contains('hidden')) {
+    hideHistoryPanel();
+    return;
+  }
+  if (!selectedSessionId || historyFetchSessionId) return;
+  const btn = document.getElementById('btn-history');
+  const capturedSessionId = selectedSessionId;
+  historyFetchSessionId = capturedSessionId;
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+  try {
+    const res = await fetchWithTimeout(
+      `/api/sessions/${encodeURIComponent(capturedSessionId)}/terminal-capture`,
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    const { text } = await res.json();
+    if (selectedSessionId !== capturedSessionId || !term) return;
+    const lineCount = (text.match(/\n/g) || []).length;
+    terminalHistoryLabel.textContent = `Scrollback history · ${lineCount.toLocaleString()} lines`;
+    showHistoryPanel(text);
+  } catch (err) {
+    alert(`Failed to load history: ${err.message}`);
+  } finally {
+    if (historyFetchSessionId === capturedSessionId) historyFetchSessionId = null;
+    btn.disabled = false;
+    btn.textContent = '⬆ History';
+  }
+});
+
+document.getElementById('btn-close-history').addEventListener('click', hideHistoryPanel);
+
+// Auto-dismiss: when user scrolls back to the bottom of the history panel,
+// return to live terminal. Only fires after they've scrolled up first
+// (prevents immediate dismiss on open, which starts scrolled to bottom).
+terminalHistoryContent.addEventListener('scroll', () => {
+  const el = terminalHistoryContent;
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 20;
+  if (!atBottom) {
+    historyScrolledUp = true;
+  } else if (historyScrolledUp) {
+    historyScrolledUp = false;
+    hideHistoryPanel();
+  }
+});
+
+// ──────────────────────────────────────────────
 // Terminal input bar
 // ──────────────────────────────────────────────
 
@@ -1085,7 +1219,7 @@ async function fetchWithTimeout(url, opts = {}, timeoutMs = 15000) {
 
 function timeAgo(dateStr) {
   if (!dateStr) return '';
-  const d = dateStr.includes('T') ? new Date(dateStr) : new Date(dateStr + 'Z');
+  const d = dateStr.includes('T') ? new Date(dateStr) : new Date(dateStr.replace(' ', 'T') + 'Z');
   const seconds = Math.floor((Date.now() - d.getTime()) / 1000);
   if (isNaN(seconds)) return '';
   if (seconds < 5) return 'just now';
@@ -1099,7 +1233,7 @@ function timeAgo(dateStr) {
 
 function formatTime(dateStr) {
   if (!dateStr) return '';
-  const d = dateStr.includes('T') ? new Date(dateStr) : new Date(dateStr + 'Z');
+  const d = dateStr.includes('T') ? new Date(dateStr) : new Date(dateStr.replace(' ', 'T') + 'Z');
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
@@ -1115,19 +1249,36 @@ function escapeHtml(str) {
 setInterval(scheduleRenderSessions, 15_000);
 
 // ──────────────────────────────────────────────
-// Terminal scroll: intercept mouse wheel to scroll the xterm viewport
-// instead of forwarding events to the terminal app (which would send
-// cursor-up/down key presses into the running Claude Code session).
+// Terminal scroll: intercept mouse wheel to scroll the xterm viewport.
+//
+// Root cause of "scrolling randomly breaks": xterm.js uses two screen buffers.
+// The NORMAL buffer has scrollback — scrollLines() works here.
+// The ALTERNATE buffer (used by TUI apps like Claude Code while running) has no
+// scrollback by design. scrollLines() is a no-op and the scroll event is silently
+// swallowed, making it feel like scrolling stopped working.
+//
+// Fix: in normal-buffer mode, intercept scroll and call scrollLines(). In
+// alternate-screen mode, scroll-up auto-fetches and shows the tmux scrollback
+// history panel. Scroll-down in the history panel auto-dismisses back to live.
 // ──────────────────────────────────────────────
 
-// capture: true ensures this fires before xterm's own wheel handler,
-// which in application/alternate-screen mode converts scroll to cursor keys.
+// capture: true runs our handler BEFORE xterm's, which would otherwise convert
+// scroll to cursor-key presses in alternate-screen mode.
 terminalContainer.addEventListener('wheel', (e) => {
   if (!term) return;
+  if (term.buffer.active.type !== 'normal') {
+    // Alternate screen = TUI mode. Scrollback lives in the hidden normal buffer.
+    // Scroll up → auto-fetch and show the history panel.
+    if (e.deltaY < 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      autoShowHistory();
+    }
+    return;
+  }
   e.preventDefault();
   e.stopPropagation();
-  // Pixel mode (Mac trackpad): 8px per line — responsive without being jumpy.
-  // Line/page mode (mouse wheel): 3 lines per click.
+  // Pixel mode (Mac trackpad): 8px per line. Line/page mode: 3 lines per click.
   const lines = e.deltaMode === 0
     ? Math.round(e.deltaY / 8)
     : Math.sign(e.deltaY) * 3;
@@ -1144,6 +1295,16 @@ terminalContainer.addEventListener('touchstart', (e) => {
 
 terminalContainer.addEventListener('touchmove', (e) => {
   if (!term) return;
+  if (term.buffer.active.type !== 'normal') {
+    // dy positive = finger moved up (upward swipe = scroll up = want history).
+    // Use same direction convention as the normal-buffer handler below.
+    const dy = _touchStartY - e.touches[0].clientY;
+    if (dy > 30) { // 30px threshold avoids accidental triggers
+      e.preventDefault();
+      autoShowHistory();
+    }
+    return;
+  }
   e.preventDefault();
   const dy = _touchStartY - e.touches[0].clientY;
   _touchStartY = e.touches[0].clientY;

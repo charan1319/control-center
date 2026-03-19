@@ -45,7 +45,15 @@
       <section id="terminal-panel" class="hidden">
         <div id="terminal-header">
           <span id="terminal-title">No session selected</span>
+          <button id="btn-history" title="View full scrollback history from tmux">⬆ History</button>
           <button id="btn-close-terminal" title="Close terminal">✕</button>
+        </div>
+        <div id="terminal-history" class="hidden">
+          <div id="terminal-history-bar">
+            <span id="terminal-history-label">Scrollback history</span>
+            <button id="btn-close-history" title="Return to live terminal">↓ Live</button>
+          </div>
+          <pre id="terminal-history-content"></pre>
         </div>
         <div id="terminal-container"></div>
         <div id="terminal-input-bar">

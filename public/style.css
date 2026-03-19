@@ -263,6 +263,35 @@ button.primary:active { opacity: 0.75; }
 }
 #terminal-container { height: 520px; padding: 4px; touch-action: none; overflow: hidden; will-change: transform; }
 
+/* Scrollback history panel — shown instead of terminal-container */
+#terminal-history { display: flex; flex-direction: column; height: 520px; }
+#terminal-history.hidden { display: none; }
+#terminal-history-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 10px;
+  background: var(--bg-overlay);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+#terminal-history-bar button { font-size: 11px; padding: 2px 8px; min-height: unset; }
+#terminal-history-content {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.4;
+  color: #cdd6f4;
+  background: #1e1e2e;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* Input bar (always visible below terminal) */
 #terminal-input-bar {
   display: flex;
@@ -413,6 +442,7 @@ dialog select {
   button { min-height: 40px; padding: 8px 14px; }
   .session-card .card-actions button { min-height: 36px; font-size: 12px; padding: 6px 10px; }
   #terminal-container { height: 55dvh; }
+  #terminal-history { height: 55dvh; }
   #terminal-quick-btns button { min-height: 40px; height: 40px; font-size: 12px; }
   #terminal-text-input { height: 40px; font-size: 14px; }
   #btn-terminal-send { height: 40px; }
@@ -484,8 +514,14 @@ dialog select {
     border-radius: 0;
   }
 
-  /* Terminal container fills available height instead of fixed 520px */
+  /* Terminal container and history panel fill available height instead of fixed 520px */
   #terminal-container {
+    flex: 1;
+    min-height: 0;
+    height: auto !important;
+  }
+
+  #terminal-history {
     flex: 1;
     min-height: 0;
     height: auto !important;

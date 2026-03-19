@@ -507,6 +507,9 @@ export async function buildServer(opts = {}) {
     if (autoApprove !== undefined && !['full', 'readonly', 'none'].includes(autoApprove)) {
       return reply.status(400).send({ error: "autoApprove must be 'full', 'readonly', or 'none'" });
     }
+    if (project && (typeof project !== 'string' || project.length > 128)) {
+      return reply.status(400).send({ error: 'Project must be a string under 128 characters' });
+    }
 
     try {
       const tmuxTarget = ptyManager.createTmuxSession({
@@ -644,6 +647,30 @@ export async function buildServer(opts = {}) {
         resolve({ status: 'pending' });
       }
     });
+  });
+
+  // ──────────────────────────────────────────────
+  // REST: tmux scrollback capture (for history view)
+  // ──────────────────────────────────────────────
+
+  fastify.get('/api/sessions/:id/terminal-capture', async (request, reply) => {
+    const session = db.getSession(request.params.id);
+    if (!session) return reply.status(404).send({ error: 'Session not found' });
+    if (!session.tmux_target) return reply.status(400).send({ error: 'No tmux target linked' });
+    // Already validated to [a-zA-Z0-9_-] on write; belt-and-suspenders here
+    if (!/^[a-zA-Z0-9_-]+$/.test(session.tmux_target)) {
+      return reply.status(400).send({ error: 'Invalid tmux target' });
+    }
+    try {
+      // -p: print to stdout  -S -10000: go 10000 lines into scrollback history
+      // Without -e: strips ANSI escape sequences → clean plain text
+      const text = execFileSync('tmux', [
+        'capture-pane', '-p', '-S', '-10000', '-t', session.tmux_target,
+      ], { encoding: 'utf-8', timeout: 10_000 });
+      return { text };
+    } catch (err) {
+      return reply.status(500).send({ error: `tmux capture failed: ${err.message}` });
+    }
   });
 
   // ──────────────────────────────────────────────
