@@ -1,7 +1,31 @@
 # Control Center — Agent Reference
 
 This file is the authoritative guide for AI agents working in this repo.
-Read it fully before making changes.
+**Read it fully before making changes.**
+
+---
+
+## Documentation Map
+
+| File | Purpose | When to update |
+|------|---------|----------------|
+| `CLAUDE.md` | Architecture, API reference, schema, conventions (this file) | When adding endpoints, changing schema, or changing how things work |
+| `DEVELOPMENT.md` | Progress log, todos, next steps, architecture decisions | After every session — mark completed items, add new todos, log decisions |
+| `SETUP.md` | Step-by-step install and configuration guide | When adding new env vars, setup steps, or dependencies |
+| `README.md` | User-facing overview and feature list | When features are added or removed |
+
+### IMPORTANT — Keep docs current
+
+**After completing any non-trivial change, you must update the relevant docs above.**
+Specifically:
+- New feature added → update `DEVELOPMENT.md` (mark todo done or add to "What's working"), update `README.md` features list
+- New API endpoint → update the endpoints table in `CLAUDE.md`
+- New env var → update config tables in `CLAUDE.md` and `SETUP.md`
+- New dependency or setup step → update `SETUP.md`
+- Architecture decision made → add a rationale entry to `DEVELOPMENT.md`
+- Todo completed → strike it off in `DEVELOPMENT.md`
+
+Outdated docs are worse than no docs. If you change something, update the docs in the same commit.
 
 ---
 
