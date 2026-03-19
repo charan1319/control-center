@@ -260,10 +260,10 @@ function renderSessions() {
       btn.disabled = true;
       btn.textContent = '…';
       try {
-        const res = await fetchWithTimeout(`/api/sessions/${encodeURIComponent(btn.dataset.id)}/input`, {
+        const res = await fetchWithTimeout(`/api/sessions/${encodeURIComponent(btn.dataset.id)}/grant-permission`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: '1' }),
+          body: '{}',
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));

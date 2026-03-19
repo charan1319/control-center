@@ -728,3 +728,44 @@ describe('Integration: Heartbeat status transitions', () => {
     assert.equal(s.last_tool, 'Bash');
   });
 });
+
+// ──────────────────────────────────────────────
+// Integration: Grant permission (long-poll flow)
+// ──────────────────────────────────────────────
+describe('Integration: Grant permission', () => {
+  it('grant-permission returns 404 for unknown session', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/sessions/no-such-id/grant-permission', payload: {} });
+    assert.equal(res.statusCode, 404);
+  });
+
+  it('grant-permission returns 204 when no hook is waiting', async () => {
+    await injectHook({ event: 'SessionStart', session_id: 'grant-nowait', cwd: '/tmp' });
+    const res = await app.inject({ method: 'POST', url: '/api/sessions/grant-nowait/grant-permission', payload: {} });
+    assert.equal(res.statusCode, 204);
+  });
+
+  it('permission-decision resolves immediately when grant arrives concurrently', async () => {
+    await injectHook({ event: 'SessionStart', session_id: 'grant-concurrent', cwd: '/tmp' });
+
+    // Start the long-poll with timeout=0 (returns instantly), then immediately grant.
+    // We test the grant-then-poll order: grant fires, then poll sees no waiter → pending.
+    // For the reverse (poll waits, grant resolves it), use a small non-zero timeout.
+    const pollPromise = app.inject({
+      method: 'GET',
+      url: '/api/sessions/grant-concurrent/permission-decision?timeout=500',
+    });
+    // Yield to the event loop so the long-poll handler registers before we grant
+    await new Promise(r => setImmediate(r));
+
+    const grantRes = await app.inject({
+      method: 'POST',
+      url: '/api/sessions/grant-concurrent/grant-permission',
+      payload: {},
+    });
+    assert.equal(grantRes.statusCode, 204);
+
+    const pollRes = await pollPromise;
+    assert.equal(pollRes.statusCode, 200);
+    assert.equal(pollRes.json().status, 'granted');
+  });
+});

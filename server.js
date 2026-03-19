@@ -174,6 +174,14 @@ export async function buildServer(opts = {}) {
   const PENDING_LABEL_TTL_MS = 60_000; // Auto-expire after 60s
 
   // ──────────────────────────────────────────────
+  // Pending permission grants
+  // When PermissionRequest is not auto-approved, the hook script long-polls
+  // /api/sessions/:id/permission-decision (up to 50s).  When the user clicks
+  // "Grant" in the dashboard, /api/sessions/:id/grant-permission resolves it.
+  // ──────────────────────────────────────────────
+  const pendingPermissions = new Map(); // session_id → resolve()
+
+  // ──────────────────────────────────────────────
   // WebSocket: Dashboard event stream
   // ──────────────────────────────────────────────
 
@@ -484,6 +492,51 @@ export async function buildServer(opts = {}) {
     const updated = db.getSession(request.params.id);
     broadcastSessionUpdate(updated);
     return reply.status(204).send();
+  });
+
+  // ──────────────────────────────────────────────
+  // REST: Grant permission (resolves the hook's long-poll)
+  // ──────────────────────────────────────────────
+
+  fastify.post('/api/sessions/:id/grant-permission', async (request, reply) => {
+    const sid = request.params.id;
+    const session = db.getSession(sid);
+    if (!session) return reply.status(404).send({ error: 'Session not found' });
+
+    const resolve = pendingPermissions.get(sid);
+    if (resolve) {
+      resolve();
+      pendingPermissions.delete(sid);
+    }
+    return reply.status(204).send();
+  });
+
+  // Long-poll endpoint: the hook script calls this and blocks until the user
+  // clicks Grant (or until the 50s timeout, whichever comes first).
+  fastify.get('/api/sessions/:id/permission-decision', async (request, reply) => {
+    const sid = request.params.id;
+    const waitMs = clampInt(request.query.timeout, 50_000, 0, 50_000);
+
+    return new Promise((resolve) => {
+      const timer = waitMs > 0
+        ? setTimeout(() => {
+            pendingPermissions.delete(sid);
+            resolve({ status: 'pending' });
+          }, waitMs)
+        : null;
+
+      pendingPermissions.set(sid, () => {
+        if (timer) clearTimeout(timer);
+        pendingPermissions.delete(sid);
+        resolve({ status: 'granted' });
+      });
+
+      if (waitMs === 0) {
+        if (timer) clearTimeout(timer);
+        pendingPermissions.delete(sid);
+        resolve({ status: 'pending' });
+      }
+    });
   });
 
   // ──────────────────────────────────────────────
