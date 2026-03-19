@@ -704,7 +704,7 @@ async function loadProjectPresets() {
 }
 
 document.getElementById('btn-new-session').addEventListener('click', async () => {
-  await Promise.all([loadProjectPresets(), loadTemplates()]);
+  await Promise.all([loadProjectPresets(), loadTemplates()]).catch(() => {});
   nsTemplate.value = '';
   newSessionModal.showModal();
 });
@@ -777,7 +777,8 @@ const templatesModalFooter = document.getElementById('templates-modal-footer');
 async function loadTemplates() {
   try {
     const res = await fetchWithTimeout('/api/templates');
-    templates = await res.json();
+    const data = await res.json();
+    templates = Array.isArray(data) ? data : [];
   } catch { templates = []; }
   renderTemplateSelect();
 }
