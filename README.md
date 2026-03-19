@@ -1,84 +1,71 @@
 # Control Center
 
-A web dashboard for monitoring and managing multiple Claude Code sessions running in tmux.
+A self-hosted web dashboard for monitoring and managing multiple Claude Code sessions running in tmux.
+Accessible from any device on your Tailscale network.
 
 ## Features
 
-- **Live session monitoring** — see all Claude Code sessions at a glance with real-time status (active, idle, waiting for permission, stopped)
-- **Browser terminal** — click any session to connect to its tmux pane via xterm.js, from any device
-- **Activity log** — chronological feed of all lifecycle events across sessions
-- **Session launcher** — start new Claude Code sessions from the dashboard
-- **Push notifications** — optional alerts via OpenClaw when sessions finish or need permission
-- **Remote access** — works from your phone or laptop over Tailscale
+- **Live session cards** — real-time status with color-coded borders (green = active, red = waiting for permission, gray = idle)
+- **Summary bar** — at-a-glance `N active · M waiting · P idle` count
+- **One-click Grant** — approve permission prompts directly from the dashboard without opening the terminal
+- **Auto-approve** — configurable list of safe tools/commands that get approved silently (Read, Glob, Grep, safe Bash)
+- **Transcript preview** — last 2 lines of what Claude said, shown on each card
+- **Session age + tool count** — how long a session has been running and how many tools it has used
+- **Browser terminal** — click any session to open a full xterm.js terminal connected to its tmux pane
+- **Mobile input bar** — type commands, hit Enter, or use Ctrl+C / Tab / arrow key buttons from your phone
+- **Activity log** — chronological feed of all lifecycle events; click any row to open that session's terminal
+- **Session launcher** — start new Claude Code sessions from the dashboard with project presets
+- **Project grouping** — active sessions organized by project; stopped sessions in a collapsible section
+- **Push notifications** — Telegram alerts via OpenClaw when sessions finish or need permission (with 30s inactivity gate)
+- **AI summaries** — optional per-card DeepSeek summary of current status (disabled by default; enable via `.env`)
+- **Remote access** — works from phone, tablet, or any laptop over Tailscale
 
 ## Prerequisites
 
 - Node.js 22+
 - tmux
 - jq, curl (for hook scripts)
-- Build tools: `make`, `gcc`/`g++`, `python3` (for native npm modules)
+- Build tools for native npm modules:
   - Ubuntu/Debian: `sudo apt install -y build-essential python3`
-  - macOS: `xcode-select --install`
 
 ## Quick Start
 
 ```bash
-git clone <repo-url> ~/control-center
-cd ~/control-center
-./install.sh
-```
-
-The install script will:
-1. Check prerequisites
-2. Run `npm install` (compiles native modules)
-3. Copy hook scripts to `~/.claude/hooks/`
-4. Merge hook configuration into `~/.claude/settings.json` (idempotent — safe to re-run)
-5. Create `.env` from `.env.example`
-6. Optionally set up a systemd user service (Linux)
-
-## Manual Start
-
-```bash
-cd ~/control-center
+git clone <repo-url> ~/Charan/control-center
+cd ~/Charan/control-center
+npm install
+cp .env.example .env   # then edit .env with your settings
+./install.sh           # copies hooks to ~/.claude/hooks/ and wires up settings.json
 npm start
-# Open http://localhost:7700
 ```
 
-Note: `npm start` uses `node --env-file=.env server.js` to load your configuration.
-If running without npm, pass the flag manually: `node --env-file=.env server.js`
+Open `http://localhost:7700`.
 
-## Push Notifications (Optional)
-
-To get alerts on your phone when sessions finish or need permission:
-
-1. Ensure OpenClaw is running locally
-2. Enable the HTTP endpoint in OpenClaw config:
-   ```javascript
-   { gateway: { http: { endpoints: { responses: { enabled: true } } } } }
-   ```
-3. Edit `.env` and set `OPENCLAW_TOKEN` to your gateway auth token
-
-## Remote Access
-
-1. Install [Tailscale](https://tailscale.com) on both the lab machine and your phone/laptop
-2. `tailscale up` on both devices
-3. Access the dashboard at `http://<tailscale-ip>:7700`
-
-## How It Works
-
-Claude Code hooks fire shell scripts on lifecycle events. Those scripts POST to the control center's HTTP API on localhost. The control center stores events in SQLite, broadcasts them over WebSocket to the dashboard, and optionally pings OpenClaw for push notifications.
-
-The terminal relay uses node-pty to bridge tmux sessions to xterm.js in the browser via WebSocket.
-
-## Configuration
-
-All settings are in `.env` (see `.env.example`):
+## Configuration (.env)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CC_PORT` | `7700` | Server port |
 | `CC_HOST` | `0.0.0.0` | Bind address |
 | `CC_DB_PATH` | `./data/control-center.sqlite` | SQLite database path |
-| `OPENCLAW_URL` | `http://127.0.0.1:18789/v1/responses` | OpenClaw API endpoint |
-| `OPENCLAW_TOKEN` | _(empty)_ | OpenClaw auth token (empty = notifications disabled) |
-| `OPENCLAW_AGENT` | `main` | OpenClaw agent ID |
+| `OPENCLAW_BIN` | _(empty)_ | Path to `openclaw` CLI; empty disables notifications |
+| `TELEGRAM_CHAT_ID` | _(empty)_ | Telegram chat ID for push notifications |
+| `DEEPSEEK_API_KEY` | _(empty)_ | DeepSeek API key for AI summaries |
+| `CC_AI_SUMMARY` | `true` | Set `false` to disable AI summary without removing the key |
+| `CC_AUTO_APPROVE_TOOLS` | `Read,Glob,Grep,WebFetch,WebSearch,LS` | Tools silently approved without user prompt |
+
+## How It Works
+
+Claude Code fires shell hooks on lifecycle events (SessionStart, Stop, PermissionRequest, PostToolUse).
+The hooks POST to the control center's HTTP API. The server stores events in SQLite, broadcasts
+real-time updates over WebSocket, and relays terminal I/O between the browser (xterm.js) and tmux (node-pty).
+
+See [CLAUDE.md](CLAUDE.md) for the full architecture, API reference, and developer guide.
+
+## Remote Access (Tailscale)
+
+1. Install Tailscale on the server machine and any client device
+2. Sign in with the same account on all devices
+3. Access at `http://<tailscale-ip>:7700` — get the IP with `tailscale ip -4`
+
+Tailscale's free tier supports up to 100 devices with no time limit.
