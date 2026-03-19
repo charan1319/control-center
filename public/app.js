@@ -9,6 +9,8 @@ let ws = null;
 let termWs = null;
 let term = null;
 let fitAddon = null;
+let termReconnectTimer = null;
+let termReconnectAttempts = 0;
 
 let serverInfo = { serverCwd: null };
 let previewCache = new Map();  // session_id → { text, fetchedAt }
@@ -283,6 +285,13 @@ function renderSessions() {
   }
 
   sessionsGrid.innerHTML = html;
+
+  // PWA badge: show count of sessions waiting for permission
+  if ('setAppBadge' in navigator) {
+    const waitingCount = sessions.filter(s => s.status === 'waiting_permission').length;
+    if (waitingCount > 0) navigator.setAppBadge(waitingCount).catch(() => {});
+    else navigator.clearAppBadge().catch(() => {});
+  }
 
   // Attach click handlers
   sessionsGrid.querySelectorAll('.btn-grant').forEach(btn => {
@@ -571,39 +580,8 @@ function openTerminal(sessionId) {
     }
   }));
 
-  // Connect WebSocket to terminal relay
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  termWs = new WebSocket(`${protocol}//${location.host}/ws/terminal/${encodeURIComponent(sessionId)}`);
-
-  termWs.onopen = () => {
-    // The initial fitAddon.fit() ran in rAF before the WebSocket was open,
-    // so any resize message was dropped. Use proposeDimensions() here instead
-    // of fit() — it returns the desired size without going through onResize,
-    // so we always send even if the dimensions haven't changed.
-    if (fitAddon && termWs?.readyState === 1) {
-      const dims = fitAddon.proposeDimensions();
-      if (dims) {
-        termWs.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
-      }
-    }
-  };
-
-  termWs.onmessage = (e) => {
-    if (!term) return;
-    let msg;
-    try { msg = JSON.parse(e.data); } catch { return; }
-    if (msg.type === 'output') {
-      term.write(msg.data);
-    } else if (msg.type === 'exit') {
-      term.write('\r\n\x1b[31m[tmux session exited]\x1b[0m\r\n');
-    } else if (msg.type === 'error') {
-      term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
-    }
-  };
-
-  termWs.onclose = () => {
-    if (term) term.write('\r\n\x1b[33m[Disconnected]\x1b[0m\r\n');
-  };
+  termReconnectAttempts = 0;
+  connectTerminalWs(sessionId);
 
   term.onData((data) => {
     if (termWs?.readyState === 1) {
@@ -620,8 +598,60 @@ function openTerminal(sessionId) {
   window.addEventListener('resize', handleWindowResize);
 }
 
+function connectTerminalWs(sessionId) {
+  if (termReconnectTimer) { clearTimeout(termReconnectTimer); termReconnectTimer = null; }
+
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  termWs = new WebSocket(`${protocol}//${location.host}/ws/terminal/${encodeURIComponent(sessionId)}`);
+
+  termWs.onopen = () => {
+    termReconnectAttempts = 0;
+    // The initial fitAddon.fit() ran in rAF before the WebSocket was open,
+    // so any resize message was dropped. Use proposeDimensions() here instead
+    // of fit() — it returns the desired size without going through onResize,
+    // so we always send even if the dimensions haven't changed.
+    if (fitAddon && termWs?.readyState === 1) {
+      const dims = fitAddon.proposeDimensions();
+      if (dims) {
+        termWs.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+      }
+    }
+  };
+
+  let tmuxExited = false;
+  termWs.onmessage = (e) => {
+    if (!term) return;
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    if (msg.type === 'output') {
+      term.write(msg.data);
+    } else if (msg.type === 'exit') {
+      tmuxExited = true;
+      term.write('\r\n\x1b[31m[tmux session exited]\x1b[0m\r\n');
+    } else if (msg.type === 'error') {
+      term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
+    }
+  };
+
+  termWs.onclose = () => {
+    // Don't reconnect if tmux exited cleanly, or if the user closed the terminal
+    if (tmuxExited || !term || selectedSessionId !== sessionId) return;
+
+    termReconnectAttempts++;
+    const delay = Math.min(1000 * Math.pow(2, termReconnectAttempts - 1), 30_000);
+    if (term) term.write(`\r\n\x1b[33m[Disconnected — reconnecting in ${Math.round(delay / 1000)}s]\x1b[0m\r\n`);
+    termReconnectTimer = setTimeout(() => {
+      if (!term || selectedSessionId !== sessionId) return;
+      if (term) term.write('\x1b[33m[Reconnecting…]\x1b[0m\r\n');
+      connectTerminalWs(sessionId);
+    }, delay);
+  };
+}
+
 function closeTerminal(keepSelection) {
   window.removeEventListener('resize', handleWindowResize);
+  if (termReconnectTimer) { clearTimeout(termReconnectTimer); termReconnectTimer = null; }
+  termReconnectAttempts = 0;
   if (termWs) { try { termWs.close(); } catch {} termWs = null; }
   if (term) { term.dispose(); term = null; }
   fitAddon = null;
