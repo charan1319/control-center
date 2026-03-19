@@ -491,7 +491,7 @@ export async function buildServer(opts = {}) {
   fastify.get('/api/sessions/:id/summary', async (request, reply) => {
     const session = db.getSession(request.params.id);
     if (!session) return reply.status(404).send({ error: 'Session not found' });
-    if (!config.deepseekApiKey || !session.transcript) return { summary: null };
+    if (!config.aiSummaryEnabled || !config.deepseekApiKey || !session.transcript) return { summary: null };
 
     const cached = summaryCache.get(request.params.id);
     if (cached && Date.now() - cached.generatedAt < 90_000) return { summary: cached.summary };
@@ -510,7 +510,7 @@ export async function buildServer(opts = {}) {
   // REST: Server info (used by frontend for protection logic)
   // ──────────────────────────────────────────────
 
-  fastify.get('/api/info', async () => ({ serverCwd: __dirname }));
+  fastify.get('/api/info', async () => ({ serverCwd: __dirname, aiSummaryEnabled: config.aiSummaryEnabled }));
 
   // ──────────────────────────────────────────────
   // REST: Events

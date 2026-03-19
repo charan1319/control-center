@@ -731,6 +731,59 @@ document.getElementById('btn-cancel-link').addEventListener('click', () => {
 document.getElementById('btn-close-terminal').addEventListener('click', () => closeTerminal(false));
 
 // ──────────────────────────────────────────────
+// Terminal input bar
+// ──────────────────────────────────────────────
+
+const terminalTextInput = document.getElementById('terminal-text-input');
+
+function sendToTerminal(text) {
+  if (termWs?.readyState === 1) {
+    termWs.send(JSON.stringify({ type: 'input', data: text }));
+  }
+}
+
+document.getElementById('btn-ctrl-c').addEventListener('click', () => {
+  sendToTerminal('\x03');
+  terminalTextInput.focus();
+});
+document.getElementById('btn-tab').addEventListener('click', () => {
+  sendToTerminal('\t');
+  terminalTextInput.focus();
+});
+document.getElementById('btn-arrow-up').addEventListener('click', () => {
+  sendToTerminal('\x1b[A');
+  terminalTextInput.focus();
+});
+document.getElementById('btn-arrow-down').addEventListener('click', () => {
+  sendToTerminal('\x1b[B');
+  terminalTextInput.focus();
+});
+
+terminalTextInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const val = terminalTextInput.value;
+    terminalTextInput.value = '';
+    sendToTerminal(val + '\r');
+  }
+});
+
+document.getElementById('btn-terminal-send').addEventListener('click', () => {
+  const val = terminalTextInput.value;
+  terminalTextInput.value = '';
+  sendToTerminal(val + '\r');
+  terminalTextInput.focus();
+});
+
+// On mobile: tapping the terminal body focuses the input bar (brings up keyboard)
+terminalContainer.addEventListener('touchend', (e) => {
+  // Only focus input if the touch wasn't a scroll gesture
+  if (e.changedTouches.length === 1 && term) {
+    terminalTextInput.focus();
+  }
+}, { passive: true });
+
+// ──────────────────────────────────────────────
 // Utilities
 // ──────────────────────────────────────────────
 
@@ -819,6 +872,7 @@ async function refreshPreviews() {
 }
 
 async function refreshSummaries() {
+  if (!serverInfo.aiSummaryEnabled) return;
   const active = sessions.filter(s => s.status !== 'stopped');
   for (const s of active) {
     const cached = summaryCache.get(s.session_id);

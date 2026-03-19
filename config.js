@@ -24,9 +24,11 @@ const config = {
   tmuxSessionPrefix: 'cc-',
 
   // AI summaries via DeepSeek (OpenAI-compatible API)
+  // Set CC_AI_SUMMARY=false in .env to disable without removing the key
   deepseekApiKey: process.env.DEEPSEEK_API_KEY || '',
   deepseekBaseUrl: 'https://api.deepseek.com/v1',
   deepseekModel: 'deepseek-chat',
+  aiSummaryEnabled: process.env.CC_AI_SUMMARY !== 'false',
 
   // Auto-approve permissions: tool names that get silently approved
   autoApproveTools: (process.env.CC_AUTO_APPROVE_TOOLS || 'Read,Glob,Grep,WebFetch,WebSearch,LS').split(',').map(t => t.trim()).filter(Boolean),

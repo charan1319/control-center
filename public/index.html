@@ -27,6 +27,18 @@
       <button id="btn-close-terminal" title="Close terminal">✕</button>
     </div>
     <div id="terminal-container"></div>
+    <div id="terminal-input-bar">
+      <div id="terminal-quick-btns">
+        <button id="btn-ctrl-c" title="Send Ctrl+C">⌃C</button>
+        <button id="btn-tab" title="Send Tab">⇥ Tab</button>
+        <button id="btn-arrow-up" title="Arrow Up (history)">↑</button>
+        <button id="btn-arrow-down" title="Arrow Down (history)">↓</button>
+      </div>
+      <input type="text" id="terminal-text-input"
+        placeholder="Type to send…"
+        autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+      <button id="btn-terminal-send" title="Send (Enter)">↵</button>
+    </div>
   </section>
 
   <section id="events-panel">

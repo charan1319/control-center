@@ -213,7 +213,50 @@ button.primary:hover { opacity: 0.9; }
   font-size: 13px;
   font-family: var(--font-mono);
 }
-#terminal-container { height: 600px; padding: 4px; }
+#terminal-container { height: 520px; padding: 4px; }
+
+/* Input bar (always visible below terminal) */
+#terminal-input-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg-overlay);
+  border-top: 1px solid var(--border);
+  flex-wrap: nowrap;
+}
+#terminal-quick-btns {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+#terminal-quick-btns button {
+  font-size: 11px;
+  padding: 0 8px;
+  height: 34px;
+  min-width: 36px;
+  font-family: var(--font-mono);
+}
+#terminal-text-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  height: 34px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+}
+#terminal-text-input:focus { border-color: var(--accent); }
+#btn-terminal-send {
+  height: 34px;
+  padding: 0 14px;
+  font-size: 16px;
+  flex-shrink: 0;
+}
 
 #events-panel { padding: 0 20px 20px; }
 #events-panel h2 { font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
@@ -289,11 +332,23 @@ dialog select {
 @media (max-width: 640px) {
   .project-sessions { grid-template-columns: 1fr; }
   .session-card { min-height: unset; }
-  #terminal-container { height: 340px; }
-  .event-row { grid-template-columns: 60px 1fr; }
-  .event-row .ev-label { display: none; }
+  /* Touch targets: ensure all buttons are at least 40px tall */
+  button { min-height: 40px; padding: 8px 14px; }
+  .session-card .card-actions button { min-height: 36px; font-size: 12px; padding: 6px 10px; }
+  #terminal-container { height: 55dvh; }
+  #terminal-quick-btns button { min-height: 40px; height: 40px; font-size: 12px; }
+  #terminal-text-input { height: 40px; font-size: 14px; }
+  #btn-terminal-send { height: 40px; }
+  .event-row { grid-template-columns: 55px 80px 1fr; }
   .event-row .ev-detail { display: none; }
   #terminal-panel { margin: 0 8px 12px; }
   #sessions-panel, #events-panel { padding-left: 8px; padding-right: 8px; }
   #header { padding: 10px 12px; }
+  #header h1 { font-size: 15px; }
+  /* On mobile, event col shows time + event name + label (truncated) */
+}
+
+/* Very small screens: hide quick buttons to give text input more space */
+@media (max-width: 380px) {
+  #terminal-quick-btns { display: none; }
 }
