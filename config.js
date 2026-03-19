@@ -33,7 +33,7 @@ const config = {
   // Auto-approve permissions: tool names that get silently approved
   autoApproveTools: (process.env.CC_AUTO_APPROVE_TOOLS || 'Read,Glob,Grep,WebFetch,WebSearch,LS').split(',').map(t => t.trim()).filter(Boolean),
   // Auto-approve Bash: commands matching this prefix pattern are silently approved
-  autoApproveBashPattern: '^(ls|ll|find|tree|cat|head|tail|wc|grep|rg|git\\s+(status|log|diff|show|branch|stash\\s+list|remote\\s+-v)|ps|df|du|free|uname|hostname|echo|pwd|which|date|printenv|env)(\\s|$)',
+  autoApproveBashPattern: '^(ls|ll|find|tree|cat|head|tail|wc|grep|rg|python[0-9.]*|git\\s+(status|log|diff|show|branch|stash\\s+list|remote\\s+-v)|ps|df|du|free|uname|hostname|echo|pwd|which|date|printenv|env)(\\s|$)',
 };
 
 // Ensure data directory exists

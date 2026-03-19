@@ -58,7 +58,7 @@ describe('POST /api/hooks', () => {
     assert.equal(res.statusCode, 204);
   });
 
-  it('Stop updates session status to stopped', async () => {
+  it('Stop sets session status back to active (not stopped — kill API does that)', async () => {
     await app.inject({
       method: 'POST',
       url: '/api/hooks',
@@ -66,7 +66,7 @@ describe('POST /api/hooks', () => {
     });
 
     const res = await app.inject({ method: 'GET', url: '/api/sessions/test-1' });
-    assert.equal(res.json().status, 'stopped');
+    assert.equal(res.json().status, 'active');
   });
 
   it('PermissionRequest updates session status to waiting_permission', async () => {

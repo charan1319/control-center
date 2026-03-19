@@ -89,7 +89,7 @@ describe('Integration: Full session lifecycle', () => {
       tool_name: 'Bash',
       tool_input: { command: 'npm install lodash' },
     });
-    assert.equal(res.statusCode, 204);
+    assert.equal(res.statusCode, 200); // PermissionRequest returns 200 with auto_approve decision
 
     const sessionRes = await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}` });
     assert.equal(sessionRes.json().status, 'waiting_permission');
@@ -127,7 +127,7 @@ describe('Integration: Full session lifecycle', () => {
     assert.ok(events.some(e => e.event === 'Notification'));
   });
 
-  it('step 6: Stop marks session as stopped', async () => {
+  it('step 6: Stop resets session to active (stopped only via kill API)', async () => {
     const res = await injectHook({
       event: 'Stop',
       session_id: sessionId,
@@ -136,7 +136,7 @@ describe('Integration: Full session lifecycle', () => {
     assert.equal(res.statusCode, 204);
 
     const sessionRes = await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}` });
-    assert.equal(sessionRes.json().status, 'stopped');
+    assert.equal(sessionRes.json().status, 'active');
   });
 
   it('step 7: All events appear in global event log in correct order', async () => {
@@ -380,14 +380,14 @@ describe('Integration: Multiple concurrent sessions', () => {
     assert.equal(s3.last_tool, null);
   });
 
-  it('stopping one session does not affect others', async () => {
+  it('Stop event on one session does not affect others', async () => {
     await injectHook({ event: 'Stop', session_id: 'multi-2', cwd: '/tmp/project-1' });
 
     const res = await app.inject({ method: 'GET', url: '/api/sessions' });
     const sessions = res.json();
 
     assert.equal(sessions.find(s => s.session_id === 'multi-1').status, 'active');
-    assert.equal(sessions.find(s => s.session_id === 'multi-2').status, 'stopped');
+    assert.equal(sessions.find(s => s.session_id === 'multi-2').status, 'active');
     assert.equal(sessions.find(s => s.session_id === 'multi-3').status, 'active');
   });
 
@@ -486,16 +486,16 @@ describe('Integration: Event pagination', () => {
 describe('Integration: Session reactivation', () => {
   const sessionId = 'reactivate-test';
 
-  it('session can be stopped and restarted multiple times', async () => {
+  it('session stays active through multiple Stop/SessionStart cycles', async () => {
     // First run
     await injectHook({ event: 'SessionStart', session_id: sessionId, cwd: '/tmp/proj' });
     let s = (await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}` })).json();
     assert.equal(s.status, 'active');
 
-    // Stop
+    // Stop — session remains active (not moved to closed)
     await injectHook({ event: 'Stop', session_id: sessionId });
     s = (await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}` })).json();
-    assert.equal(s.status, 'stopped');
+    assert.equal(s.status, 'active');
 
     // Restart
     await injectHook({ event: 'SessionStart', session_id: sessionId, cwd: '/tmp/proj' });
@@ -505,7 +505,7 @@ describe('Integration: Session reactivation', () => {
     // Stop again
     await injectHook({ event: 'Stop', session_id: sessionId });
     s = (await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}` })).json();
-    assert.equal(s.status, 'stopped');
+    assert.equal(s.status, 'active');
 
     // All lifecycle events should be logged
     const events = (await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/events` })).json();
@@ -703,15 +703,16 @@ describe('Integration: Heartbeat status transitions', () => {
     assert.equal(s.last_tool, 'Bash');
   });
 
-  it('heartbeat does NOT revive stopped sessions', async () => {
+  it('heartbeat does NOT revive killed sessions', async () => {
     const sid = 'heartbeat-stop-test';
     await injectHook({ event: 'SessionStart', session_id: sid, cwd: '/tmp/hs' });
-    await injectHook({ event: 'Stop', session_id: sid });
+    // Only the Kill API sets status='stopped' (Stop event no longer does)
+    await app.inject({ method: 'POST', url: `/api/sessions/${sid}/kill` });
 
     let s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
     assert.equal(s.status, 'stopped');
 
-    // Stale heartbeat arrives after session stopped → should stay stopped
+    // Stale heartbeat arrives after session was killed → should stay stopped
     await injectHook({ event: 'Heartbeat', session_id: sid, tool_name: 'Write' });
     s = (await app.inject({ method: 'GET', url: `/api/sessions/${sid}` })).json();
     assert.equal(s.status, 'stopped');

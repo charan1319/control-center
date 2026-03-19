@@ -292,17 +292,24 @@ export async function buildServer(opts = {}) {
     // 2. Update session status (with auto-approve logic for PermissionRequest)
     let autoApproved = false;
     if (event === 'Stop') {
-      db.updateStatus(session_id, 'stopped');
+      // Stop fires at the end of each Claude turn, not just when the process exits.
+      // Set back to 'active' so the card stays visible; the 120s heartbeat age
+      // will naturally show it as 'idle'. Only the Kill API sets 'stopped'.
+      db.updateStatus(session_id, 'active');
     } else if (event === 'PermissionRequest') {
       if (shouldAutoApprove(payload)) {
+        // Mark as auto-approved immediately — the hook script handles the actual
+        // approval by outputting {"decision":"approve"} to stdout (modern Claude Code).
+        autoApproved = true;
+        // Also try tmux paste as a fallback for older Claude Code versions that
+        // still show a terminal prompt.
         const sess = db.getSession(session_id);
         if (sess?.tmux_target && /^[a-zA-Z0-9_-]+$/.test(sess.tmux_target)) {
           try {
             const buf = `cc-ap-${Date.now()}`;
             execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: '1\n', timeout: 5_000 });
             execFileSync('tmux', ['paste-buffer', '-t', sess.tmux_target, '-b', buf, '-d'], { timeout: 5_000 });
-            autoApproved = true;
-          } catch { /* auto-approve failed — fall through to normal waiting */ }
+          } catch { /* tmux paste failed — hook output handles it */ }
         }
       }
       if (!autoApproved) {
@@ -353,6 +360,12 @@ export async function buildServer(opts = {}) {
       if (msAgo >= 30_000) {
         notifier.send(payload).catch(() => {});
       }
+    }
+
+    // For PermissionRequest: return the auto-approve decision so the hook script
+    // can output {"decision":"approve"} to stdout, telling Claude Code directly.
+    if (event === 'PermissionRequest') {
+      return reply.status(200).send({ auto_approve: autoApproved });
     }
 
     return reply.status(204).send();
