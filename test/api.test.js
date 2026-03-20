@@ -53,6 +53,7 @@ describe('POST /api/hooks', () => {
         cwd: '/tmp/proj',
         model: 'claude-sonnet-4-6',
         transcript_path: '/tmp/t.jsonl',
+        tmux_session: 'cc-test',
       },
     });
     assert.equal(res.statusCode, 204);
@@ -74,7 +75,7 @@ describe('POST /api/hooks', () => {
     await app.inject({
       method: 'POST',
       url: '/api/hooks',
-      payload: { event: 'SessionStart', session_id: 'test-1', cwd: '/tmp/proj' },
+      payload: { event: 'SessionStart', session_id: 'test-1', cwd: '/tmp/proj', tmux_session: 'cc-test' },
     });
 
     await app.inject({

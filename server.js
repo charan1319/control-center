@@ -209,25 +209,26 @@ function hookRateLimited(ip) {
 // and their last heartbeat is more than 4 hours ago.
 // ──────────────────────────────────────────────
 
+// Returns array of session_ids that were marked stopped.
 function cleanupZombies() {
   const liveTmuxNames = new Set(ptyManager.listTmuxSessions().map(s => s.name));
   const active = db.getActiveSessions();
-  let cleaned = 0;
+  const stopped = [];
+
   for (const s of active) {
-    if (s.status === 'waiting_permission') continue; // never auto-stop waiting sessions
+    if (s.status === 'waiting_permission') continue;
     const hasLiveTmux = s.tmux_target && liveTmuxNames.has(s.tmux_target);
     if (!hasLiveTmux) {
-      const lastHb = s.last_heartbeat;
-      const msAgo = lastHb
-        ? Date.now() - new Date(lastHb.replace(' ', 'T') + 'Z').getTime()
+      const msAgo = s.last_heartbeat
+        ? Date.now() - new Date(s.last_heartbeat.replace(' ', 'T') + 'Z').getTime()
         : Infinity;
       if (msAgo > 4 * 60 * 60 * 1000) {
         db.updateStatus(s.session_id, 'stopped');
-        cleaned++;
+        stopped.push(s.session_id);
       }
     }
   }
-  return cleaned;
+  return stopped;
 }
 
 // ──────────────────────────────────────────────
@@ -365,6 +366,11 @@ export async function buildServer(opts = {}) {
 
     // 1. Upsert session on SessionStart
     if (event === 'SessionStart') {
+      // Ignore headless sessions (not running inside a tmux pane).
+      // Only interactive sessions in tmux get a dashboard card.
+      if (!payload.tmux_session) {
+        return reply.status(204).send();
+      }
       db.upsertSession({
         session_id,
         cwd: payload.cwd,
@@ -374,10 +380,20 @@ export async function buildServer(opts = {}) {
       // Auto-link tmux target by matching cwd, and apply any pending label from launch
       // Prefer the tmux session name reported by the hook (unambiguous),
       // fall back to CWD matching when Claude Code is not running inside tmux.
+      // For CWD-match: skip targets already claimed by another active session —
+      // prevents headless/batch Claude Code runs from hijacking the interactive terminal.
       const tmuxSessions = ptyManager.listTmuxSessions();
-      const match = payload.tmux_session
-        ? tmuxSessions.find(ts => ts.name === payload.tmux_session)
-        : tmuxSessions.find(ts => ts.cwd === payload.cwd);
+      let match;
+      if (payload.tmux_session) {
+        match = tmuxSessions.find(ts => ts.name === payload.tmux_session);
+      } else {
+        const claimedTargets = new Set(
+          db.getAllSessions()
+            .filter(s => s.status !== 'stopped' && s.session_id !== session_id && s.tmux_target)
+            .map(s => s.tmux_target)
+        );
+        match = tmuxSessions.find(ts => ts.cwd === payload.cwd && !claimedTargets.has(ts.name));
+      }
       if (match) {
         const pending = pendingLabels.get(match.name);
         const validPending = pending && (Date.now() - pending.createdAt < PENDING_LABEL_TTL_MS);
@@ -533,7 +549,7 @@ export async function buildServer(opts = {}) {
   // ──────────────────────────────────────────────
 
   fastify.post('/api/sessions/launch', async (request, reply) => {
-    const { label, cwd, initialPrompt, project, autoApprove } = request.body || {};
+    const { label, cwd, initialPrompt, project, autoApprove, skipPermissions } = request.body || {};
 
     // Input validation
     if (label && (typeof label !== 'string' || label.length > 256)) {
@@ -557,6 +573,7 @@ export async function buildServer(opts = {}) {
         label,
         cwd: cwd || process.env.HOME,
         initialPrompt,
+        skipPermissions: !!skipPermissions,
       });
       // Store label/project/autoApprove so the SessionStart hook handler can apply them when auto-linking
       if (label || project || autoApprove !== undefined) {
@@ -756,26 +773,12 @@ export async function buildServer(opts = {}) {
   fastify.get('/api/stats', async () => db.getStats());
 
   fastify.post('/api/sessions/cleanup-zombies', async () => {
-    const liveTmuxNames = new Set(ptyManager.listTmuxSessions().map(s => s.name));
-    const active = db.getActiveSessions();
-    let cleaned = 0;
-    for (const s of active) {
-      if (s.status === 'waiting_permission') continue;
-      const hasLiveTmux = s.tmux_target && liveTmuxNames.has(s.tmux_target);
-      if (!hasLiveTmux) {
-        const lastHb = s.last_heartbeat;
-        const msAgo = lastHb
-          ? Date.now() - new Date(lastHb.replace(' ', 'T') + 'Z').getTime()
-          : Infinity;
-        if (msAgo > 4 * 60 * 60 * 1000) {
-          db.updateStatus(s.session_id, 'stopped');
-          const updated = db.getSession(s.session_id);
-          if (updated) broadcastSessionUpdate(updated);
-          cleaned++;
-        }
-      }
+    const stoppedIds = cleanupZombies();
+    for (const id of stoppedIds) {
+      const updated = db.getSession(id);
+      if (updated) broadcastSessionUpdate(updated);
     }
-    return { cleaned };
+    return { cleaned: stoppedIds.length };
   });
 
   // ──────────────────────────────────────────────
@@ -917,8 +920,8 @@ if (isMainModule) {
   // Zombie cleanup on startup: mark sessions as stopped if their tmux target
   // is gone and they haven't had a heartbeat in 4+ hours.
   {
-    const n = cleanupZombies();
-    if (n > 0) console.log(`[startup] Marked ${n} zombie session(s) as stopped`);
+    const stopped = cleanupZombies();
+    if (stopped.length > 0) console.log(`[startup] Marked ${stopped.length} zombie session(s) as stopped`);
   }
 
   // Auto-cleanup: delete stopped sessions older than configured days

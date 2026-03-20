@@ -3,6 +3,9 @@
 # Used for: SessionStart, Stop, PermissionRequest, Notification
 set -euo pipefail
 
+# Skip reporting for headless/batch runs that shouldn't appear in the dashboard
+[ "${CC_SKIP_REPORT:-0}" = "1" ] && exit 0
+
 INPUT=$(cat)
 
 # If running inside tmux, capture the session name for unambiguous linking

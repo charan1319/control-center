@@ -2,6 +2,8 @@
 # Claude Code hook — lightweight heartbeat on PostToolUse.
 set -euo pipefail
 
+[ "${CC_SKIP_REPORT:-0}" = "1" ] && exit 0
+
 INPUT=$(cat)
 
 PAYLOAD=$(echo "$INPUT" | jq -c '{

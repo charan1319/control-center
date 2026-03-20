@@ -30,7 +30,11 @@ after(async () => {
 // Helper: simulate a full Claude Code session lifecycle
 // ──────────────────────────────────────────────
 async function injectHook(payload) {
-  return app.inject({ method: 'POST', url: '/api/hooks', payload });
+  const p = { ...payload };
+  // Tests don't run inside tmux, so supply a fake tmux_session for SessionStart
+  // to satisfy the server's tmux-only card creation requirement.
+  if (p.event === 'SessionStart' && !p.tmux_session) p.tmux_session = 'cc-test';
+  return app.inject({ method: 'POST', url: '/api/hooks', payload: p });
 }
 
 // ──────────────────────────────────────────────

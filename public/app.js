@@ -782,6 +782,7 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
     : undefined;
   const initialPrompt = document.getElementById('ns-prompt').value.trim();
   const autoApprove = document.getElementById('ns-auto-approve').value; // 'full' | 'readonly' | 'none'
+  const skipPermissions = document.getElementById('ns-skip-permissions').checked;
 
   if (!label) {
     document.getElementById('ns-label').focus();
@@ -800,6 +801,7 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
         cwd: cwd || undefined,
         initialPrompt: initialPrompt || undefined,
         autoApprove,
+        skipPermissions: skipPermissions || undefined,
       }),
     }, 30000);
     if (!res.ok) throw new Error((await res.json()).error);
@@ -810,6 +812,7 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
     document.getElementById('ns-cwd-preset').selectedIndex = 0;
     document.getElementById('ns-prompt').value = '';
     document.getElementById('ns-auto-approve').selectedIndex = 0;
+    document.getElementById('ns-skip-permissions').checked = false;
   } catch (err) {
     alert(`Failed to launch: ${err.message}`);
   } finally {
