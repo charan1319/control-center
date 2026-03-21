@@ -189,8 +189,12 @@ cd "$INSTALL_DIR"
 
 # ── npm install ───────────────────────────────────
 info "Installing Node.js dependencies..."
-npm install --omit=dev --silent 2>&1 | tail -1 || die "npm install failed. Check build-essential/python3 are installed."
+npm install --silent 2>&1 | tail -1 || die "npm install failed. Check build-essential/python3 are installed."
 success "Dependencies installed"
+
+info "Building frontend..."
+npm run build 2>&1 | tail -1 || die "Frontend build failed."
+success "Frontend built"
 
 # ── Create .env ───────────────────────────────────
 if [[ -f "$INSTALL_DIR/.env" ]]; then
