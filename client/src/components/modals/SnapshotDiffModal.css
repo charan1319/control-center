@@ -1,0 +1,128 @@
+/* ─── SnapshotDiffModal ─── */
+
+.snapshot-diff-modal .modal-card {
+  max-width: 600px;
+}
+
+.snapshot-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 0;
+  color: var(--ctp-overlay1);
+  font-size: 13px;
+  gap: 10px;
+}
+
+.snapshot-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--ctp-surface2);
+  border-top-color: var(--ctp-blue);
+  border-radius: 50%;
+  animation: snapshot-spin 0.7s linear infinite;
+}
+
+@keyframes snapshot-spin {
+  to { transform: rotate(360deg); }
+}
+
+.snapshot-empty {
+  text-align: center;
+  padding: 24px 0;
+  color: var(--ctp-overlay1);
+  font-size: 13px;
+}
+
+.snapshot-section {
+  margin-bottom: 16px;
+}
+
+.snapshot-section:last-child {
+  margin-bottom: 0;
+}
+
+.snapshot-section-header {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.snapshot-section-header.added {
+  color: var(--ctp-red);
+}
+
+.snapshot-section-header.modified {
+  color: var(--ctp-yellow);
+}
+
+.snapshot-section-header.deleted {
+  color: var(--ctp-green);
+}
+
+.snapshot-section-hint {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--ctp-overlay0);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.snapshot-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.snapshot-file-item {
+  font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--ctp-mantle);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  word-break: break-all;
+}
+
+.snapshot-file-icon {
+  flex-shrink: 0;
+  font-weight: 700;
+  width: 16px;
+  text-align: center;
+}
+
+.snapshot-file-icon.added {
+  color: var(--ctp-red);
+}
+
+.snapshot-file-icon.modified {
+  color: var(--ctp-yellow);
+}
+
+.snapshot-file-icon.deleted {
+  color: var(--ctp-green);
+}
+
+.snapshot-file-path {
+  color: var(--ctp-subtext1);
+}
+
+/* Confirm Revert button — warning style */
+.modal-btn-warning {
+  background: var(--ctp-peach);
+  color: var(--ctp-crust);
+}
+
+.modal-btn-warning:hover:not(:disabled) {
+  opacity: 0.9;
+}

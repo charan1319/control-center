@@ -8,6 +8,7 @@ import {
 import type { Session, SessionEvent, ServerInfo } from '../types';
 import { EditSessionModal } from './modals/EditSessionModal';
 import { LinkTmuxModal } from './modals/LinkTmuxModal';
+import { SnapshotDiffModal } from './modals/SnapshotDiffModal';
 import './SessionCard.css';
 
 interface SessionCardProps {
@@ -21,6 +22,7 @@ interface SessionCardProps {
 function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEvents }: SessionCardProps) {
   const [editOpen, setEditOpen] = useState(false);
   const [linkTmuxOpen, setLinkTmuxOpen] = useState(false);
+  const [snapshotOpen, setSnapshotOpen] = useState(false);
 
   const statusClass = getStatusClass(session);
   const statusText = getStatusText(session);
@@ -99,6 +101,11 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
     setLinkTmuxOpen(true);
   }, []);
 
+  const handleRevert = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSnapshotOpen(true);
+  }, []);
+
   return (
     <div
       className={`session-card status-${statusClass}${isSelected ? ' selected' : ''}`}
@@ -164,6 +171,11 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
         <button className="btn-edit" onClick={handleEdit}>
           Edit
         </button>
+        {isStopped && session.snapshot_hash && (
+          <button className="btn-revert" onClick={handleRevert}>
+            Revert
+          </button>
+        )}
         {showKill && (
           <button
             className={`btn-kill${isServerSession ? ' btn-kill-protected' : ''}`}
@@ -186,6 +198,13 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
         <LinkTmuxModal
           isOpen={linkTmuxOpen}
           onClose={() => setLinkTmuxOpen(false)}
+          sessionId={session.session_id}
+        />
+      )}
+      {snapshotOpen && (
+        <SnapshotDiffModal
+          isOpen={snapshotOpen}
+          onClose={() => setSnapshotOpen(false)}
           sessionId={session.session_id}
         />
       )}
