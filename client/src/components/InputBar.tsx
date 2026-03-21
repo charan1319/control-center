@@ -55,7 +55,7 @@ export function InputBar({ sessionId, mode, terminalWs, onMessageSent }: InputBa
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [value, sendText]);
+  }, [value, sendText, mode, onMessageSent]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {

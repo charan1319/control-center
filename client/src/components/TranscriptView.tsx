@@ -198,7 +198,13 @@ export function TranscriptView({ sessionId, session, queuedMessages, onClearQueu
     if (!queuedMessages?.length || !onClearQueued) return;
     const userEntries = entries.filter(e => e.type === 'user');
     for (const msg of queuedMessages) {
-      if (userEntries.some(e => e.content.includes(msg.slice(0, 50)))) {
+      // Match on the first 30 chars — enough to identify, short enough to tolerate
+      // minor differences in how the transcript records the message
+      const needle = msg.slice(0, 30).trim();
+      if (needle && userEntries.some(e => {
+        const content = typeof e.content === 'string' ? e.content : '';
+        return content.includes(needle);
+      })) {
         onClearQueued(msg);
       }
     }

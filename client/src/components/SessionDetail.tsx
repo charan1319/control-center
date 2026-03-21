@@ -23,6 +23,11 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
   const [, forceUpdate] = useState(0);
   const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
 
+  const handleMessageSent = useCallback((text: string) => {
+    setQueuedMessages(prev => [...prev, text]);
+    setTimeout(() => setQueuedMessages(prev => prev.filter(m => m !== text)), 15000);
+  }, []);
+
   const statusClass = getStatusClass(session);
   const label = session.label || session.session_id.slice(0, 12);
 
@@ -109,11 +114,7 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
           sessionId={session.session_id}
           mode={activeTab}
           terminalWs={terminalWsRef.current}
-          onMessageSent={(text) => {
-            setQueuedMessages(prev => [...prev, text]);
-            // Clear after 15s max — but TranscriptView clears sooner when it sees the message
-            setTimeout(() => setQueuedMessages(prev => prev.filter(m => m !== text)), 15000);
-          }}
+          onMessageSent={handleMessageSent}
         />
       )}
     </div>
