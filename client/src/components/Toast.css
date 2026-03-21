@@ -1,0 +1,82 @@
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  pointer-events: none;
+  max-width: 360px;
+}
+
+.toast {
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  background: var(--ctp-surface0);
+  border: 1px solid var(--ctp-surface1);
+  color: var(--ctp-text);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: toastSlideIn 0.3s ease, toastSlideOut 0.3s ease 4.2s forwards;
+}
+
+.toast-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.toast-info {
+  border-color: var(--ctp-blue);
+}
+.toast-info .toast-dot {
+  background: var(--ctp-blue);
+}
+
+.toast-success {
+  border-color: var(--ctp-green);
+}
+.toast-success .toast-dot {
+  background: var(--ctp-green);
+}
+
+.toast-error {
+  border-color: var(--ctp-red);
+}
+.toast-error .toast-dot {
+  background: var(--ctp-red);
+}
+
+@keyframes toastSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes toastSlideOut {
+  to {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+}
+
+@media (max-width: 640px) {
+  .toast-container {
+    left: 12px;
+    right: 12px;
+    max-width: none;
+  }
+}

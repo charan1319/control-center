@@ -1,0 +1,33 @@
+.project-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.project-heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ctp-overlay0);
+  padding: 2px 6px;
+  border-left: 3px solid transparent;
+}
+
+.project-sessions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+@media (max-width: 640px) {
+  .project-sessions {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 899px) {
+  .project-sessions {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
