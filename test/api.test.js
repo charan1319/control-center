@@ -558,3 +558,100 @@ describe('Project Pulse API', () => {
     assert.ok(!body.text.includes('## '));
   });
 });
+
+describe('TODO Tracker API', () => {
+  let createdTodoId;
+
+  it('GET /api/todos requires project parameter', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/todos' });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('GET /api/todos?project=X returns empty todos array initially', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/todos?project=todo-test-proj' });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.ok(Array.isArray(body.todos));
+    assert.equal(body.todos.length, 0);
+  });
+
+  it('POST /api/todos creates a todo and returns it', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/todos',
+      payload: { project: 'todo-test-proj', title: 'Fix login bug', details: 'Users cannot log in on mobile', priority: 1 },
+    });
+    assert.equal(res.statusCode, 201);
+    const todo = res.json();
+    assert.ok(todo.id);
+    assert.equal(todo.project, 'todo-test-proj');
+    assert.equal(todo.title, 'Fix login bug');
+    assert.equal(todo.details, 'Users cannot log in on mobile');
+    assert.equal(todo.priority, 1);
+    assert.equal(todo.status, 'pending');
+    createdTodoId = todo.id;
+  });
+
+  it('POST /api/todos requires project and title', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/todos',
+      payload: { project: 'todo-test-proj' },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('GET /api/todos?project=X returns the created todo', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/todos?project=todo-test-proj' });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.todos.length, 1);
+    assert.equal(body.todos[0].title, 'Fix login bug');
+  });
+
+  it('PATCH /api/todos/:id updates a todo', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/todos/${createdTodoId}`,
+      payload: { title: 'Fix login bug (urgent)', status: 'in_progress' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json(), { ok: true });
+
+    // Verify the update
+    const getRes = await app.inject({ method: 'GET', url: '/api/todos?project=todo-test-proj' });
+    const todo = getRes.json().todos[0];
+    assert.equal(todo.title, 'Fix login bug (urgent)');
+    assert.equal(todo.status, 'in_progress');
+  });
+
+  it('PATCH /api/todos/:id returns 404 for nonexistent todo', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/todos/999999',
+      payload: { title: 'nope' },
+    });
+    assert.equal(res.statusCode, 404);
+  });
+
+  it('DELETE /api/todos/:id deletes a todo', async () => {
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/todos/${createdTodoId}`,
+    });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json(), { ok: true });
+
+    // Verify deletion
+    const getRes = await app.inject({ method: 'GET', url: '/api/todos?project=todo-test-proj' });
+    assert.equal(getRes.json().todos.length, 0);
+  });
+
+  it('DELETE /api/todos/:id returns 404 for nonexistent todo', async () => {
+    const res = await app.inject({
+      method: 'DELETE',
+      url: '/api/todos/999999',
+    });
+    assert.equal(res.statusCode, 404);
+  });
+});

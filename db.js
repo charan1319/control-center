@@ -81,6 +81,22 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_file_edits_path ON file_edits(file_path);
 `);
 
+// ── Todos table ─────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS todos (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project     TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    details     TEXT DEFAULT '',
+    status      TEXT DEFAULT 'pending',
+    priority    INTEGER DEFAULT 0,
+    session_id  TEXT,
+    created_at  TEXT DEFAULT (datetime('now')),
+    updated_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_todos_project ON todos(project);
+`);
+
 // ── FTS5 full-text search on events ─────────────
 db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
   tool_name,
@@ -275,6 +291,27 @@ const stmts = {
         )
       )`
   ),
+
+  // ── Todos ──────────────────────────────────────
+  getTodosByProject: db.prepare(
+    `SELECT * FROM todos WHERE project = @project ORDER BY
+     CASE status WHEN 'in_progress' THEN 0 WHEN 'pending' THEN 1 WHEN 'done' THEN 2 END,
+     priority ASC, created_at DESC`
+  ),
+  insertTodo: db.prepare(
+    `INSERT INTO todos (project, title, details, priority) VALUES (@project, @title, @details, @priority)`
+  ),
+  updateTodo: db.prepare(
+    `UPDATE todos SET title=COALESCE(@title,title), details=COALESCE(@details,details),
+     status=COALESCE(@status,status), priority=COALESCE(@priority,priority),
+     updated_at=datetime('now') WHERE id=@id`
+  ),
+  deleteTodo: db.prepare(`DELETE FROM todos WHERE id = @id`),
+  linkTodoSession: db.prepare(
+    `UPDATE todos SET session_id=@session_id, status='in_progress', updated_at=datetime('now') WHERE id=@id`
+  ),
+  getTodoBySessionId: db.prepare(`SELECT * FROM todos WHERE session_id = @session_id`),
+  getTodoById: db.prepare(`SELECT * FROM todos WHERE id = @id`),
 };
 
 // ──────────────────────────────────────────────
@@ -377,6 +414,30 @@ export function searchSessions({ project, q, from_date, to_date, limit, offset }
   const sessions = stmts.searchSessions.all(params);
   const { total } = stmts.countSearchSessions.get(params);
   return { sessions, total };
+}
+
+// ── Todos ──────────────────────────────────────
+export function getTodosByProject(project) {
+  return stmts.getTodosByProject.all({ project });
+}
+export function insertTodo(project, title, details, priority) {
+  const result = stmts.insertTodo.run({ project, title, details: details || '', priority: priority || 0 });
+  return stmts.getTodoById.get({ id: result.lastInsertRowid });
+}
+export function updateTodo(id, { title, details, status, priority }) {
+  return stmts.updateTodo.run({ id, title: title ?? null, details: details ?? null, status: status ?? null, priority: priority ?? null });
+}
+export function deleteTodo(id) {
+  return stmts.deleteTodo.run({ id });
+}
+export function linkTodoSession(todoId, session_id) {
+  return stmts.linkTodoSession.run({ id: todoId, session_id });
+}
+export function getTodoBySessionId(session_id) {
+  return stmts.getTodoBySessionId.get({ session_id });
+}
+export function getTodoById(id) {
+  return stmts.getTodoById.get({ id });
 }
 
 const setPendingStmt = db.prepare(`

@@ -272,6 +272,15 @@ function cleanupZombies() {
       if (msAgo > 4 * 60 * 60 * 1000) {
         db.updateStatus(s.session_id, 'stopped');
         stopped.push(s.session_id);
+
+        // Notify dashboard if a todo was linked to this zombie session
+        const todo = db.getTodoBySessionId(s.session_id);
+        if (todo) {
+          const msg = JSON.stringify({ type: 'todo_session_stopped', todo_id: todo.id, session_id: s.session_id });
+          for (const client of dashboardClients) {
+            try { if (client.readyState === 1) client.send(msg); } catch {}
+          }
+        }
       }
     }
   }
@@ -668,7 +677,12 @@ export async function buildServer(opts = {}) {
           project: validPending ? pending.project : undefined,
           auto_approve: validPending ? pending.autoApproveDbVal : undefined,
         });
-        if (pending) pendingLabels.delete(match.name);
+        if (pending) {
+          if (pending.todoId) {
+            db.linkTodoSession(pending.todoId, session_id);
+          }
+          pendingLabels.delete(match.name);
+        }
       }
 
       // Capture initial snapshot (fire and forget — don't block hook response)
@@ -948,6 +962,16 @@ export async function buildServer(opts = {}) {
     db.updateStatus(request.params.id, 'stopped');
     const updated = db.getSession(request.params.id);
     broadcastSessionUpdate(updated);
+
+    // Notify dashboard if a todo was linked to this session
+    const todo = db.getTodoBySessionId(request.params.id);
+    if (todo) {
+      const msg = JSON.stringify({ type: 'todo_session_stopped', todo_id: todo.id, session_id: request.params.id });
+      for (const client of dashboardClients) {
+        try { if (client.readyState === 1) client.send(msg); } catch {}
+      }
+    }
+
     return reply.status(204).send();
   });
 
@@ -1296,6 +1320,112 @@ export async function buildServer(opts = {}) {
   });
 
   // ──────────────────────────────────────────────
+  // REST: Todos
+  // ──────────────────────────────────────────────
+
+  fastify.get('/api/todos', async (request, reply) => {
+    const { project } = request.query || {};
+    if (!project) return reply.status(400).send({ error: 'project query parameter is required' });
+    return { todos: db.getTodosByProject(project) };
+  });
+
+  fastify.post('/api/todos', async (request, reply) => {
+    const { project, title, details, priority } = request.body || {};
+    if (!project || typeof project !== 'string') return reply.status(400).send({ error: 'project is required' });
+    if (!title || typeof title !== 'string') return reply.status(400).send({ error: 'title is required' });
+    const todo = db.insertTodo(project, title, details, priority);
+    return reply.status(201).send(todo);
+  });
+
+  fastify.patch('/api/todos/:id', async (request, reply) => {
+    const id = parseInt(request.params.id, 10);
+    if (isNaN(id)) return reply.status(400).send({ error: 'Invalid todo id' });
+    const existing = db.getTodoById(id);
+    if (!existing) return reply.status(404).send({ error: 'Todo not found' });
+    const { title, details, status, priority } = request.body || {};
+    db.updateTodo(id, { title, details, status, priority });
+    return { ok: true };
+  });
+
+  fastify.delete('/api/todos/:id', async (request, reply) => {
+    const id = parseInt(request.params.id, 10);
+    if (isNaN(id)) return reply.status(400).send({ error: 'Invalid todo id' });
+    const existing = db.getTodoById(id);
+    if (!existing) return reply.status(404).send({ error: 'Todo not found' });
+    db.deleteTodo(id);
+    return { ok: true };
+  });
+
+  fastify.post('/api/todos/:id/launch', async (request, reply) => {
+    const id = parseInt(request.params.id, 10);
+    if (isNaN(id)) return reply.status(400).send({ error: 'Invalid todo id' });
+    const todo = db.getTodoById(id);
+    if (!todo) return reply.status(404).send({ error: 'Todo not found' });
+
+    // Resolve project CWD
+    const projects = readProjects();
+    const preset = projects.find(p => p.name === todo.project);
+    let cwd = preset?.cwd;
+    if (!cwd) {
+      const sessions = db.getSessionsByProject(todo.project);
+      cwd = sessions?.[0]?.cwd;
+    }
+    if (!cwd) {
+      return reply.status(400).send({ error: 'Cannot determine CWD for project. Add it to project presets.' });
+    }
+
+    const { skipPermissions } = request.body || {};
+
+    // Build launch prompt
+    let initialPrompt = `You are a skilled software engineer working on the "${todo.project}" project.
+You have been assigned a specific task to complete.
+
+Before writing any code:
+1. Read the project's CLAUDE.md file to understand conventions, architecture, and rules.
+2. Read .control-center/pulse.md if it exists for awareness of other active sessions.
+3. Identify and read the files most relevant to this task.
+4. Formulate a clear, concise implementation plan.
+5. Present your plan and wait for approval before proceeding.
+
+After receiving approval, implement the changes methodically:
+- Make the minimal changes needed to accomplish the task.
+- Run existing tests if applicable (check CLAUDE.md for test commands).
+- Do not modify files unrelated to the task.
+
+## Task: ${todo.title}
+${todo.details || ''}
+
+Begin by reading CLAUDE.md and the relevant source files, then present your implementation plan.`;
+
+    // Inject pulse context if available
+    const pulseText = pulse.getPulseForPrompt(todo.project);
+    if (pulseText.trim()) {
+      initialPrompt = `[Project context — auto-generated by Control Center]\n${pulseText}\n[End project context]\n\n${initialPrompt}`;
+    }
+
+    try {
+      const tmuxTarget = ptyManager.createTmuxSession({
+        label: todo.title,
+        cwd,
+        initialPrompt,
+        skipPermissions: !!skipPermissions,
+      });
+
+      pendingLabels.set(tmuxTarget, {
+        label: todo.title,
+        project: todo.project,
+        autoApproveDbVal: 1,
+        todoId: todo.id,
+        createdAt: Date.now(),
+      });
+
+      return { success: true, tmux_target: tmuxTarget, todo_id: todo.id };
+    } catch (err) {
+      return reply.status(500).send({ error: `Failed to launch session: ${err.message}` });
+    }
+  });
+
+  // ──────────────────────────────────────────────
   // REST: Web Push subscriptions
   // ──────────────────────────────────────────────
 
@@ -1364,6 +1494,9 @@ if (isMainModule) {
       const result = db.deleteStoppedSessionsOlderThan(config.sessionCleanupDays);
       if (result.changes > 0) {
         console.log(`[cleanup] Deleted ${result.changes} stopped session(s) older than ${config.sessionCleanupDays} days`);
+        // Cascade: clean up orphaned rows from related tables
+        db.default.prepare('DELETE FROM file_edits WHERE session_id NOT IN (SELECT session_id FROM sessions)').run();
+        db.default.prepare('DELETE FROM todos WHERE session_id IS NOT NULL AND session_id NOT IN (SELECT session_id FROM sessions)').run();
       }
     };
     runCleanup(); // run once on startup
