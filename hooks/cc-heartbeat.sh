@@ -13,6 +13,11 @@ PAYLOAD=$(echo "$INPUT" | jq -c '{
   event: "Heartbeat",
   session_id: .session_id,
   tool_name: (.tool_name // null),
+  file_path: (
+    if (.tool_name == "Write" or .tool_name == "Edit" or .tool_name == "MultiEdit" or .tool_name == "NotebookEdit") then
+      (.tool_input.file_path // .tool_input.path // null)
+    else null end
+  ),
   timestamp: (now | todate)
 }' 2>/dev/null) || { echo "cc-heartbeat: jq parse failed" >&2; exit 0; }
 

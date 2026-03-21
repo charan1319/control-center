@@ -66,6 +66,17 @@ db.exec(`
     key   TEXT PRIMARY KEY,
     value REAL NOT NULL DEFAULT 0
   );
+
+  CREATE TABLE IF NOT EXISTS file_edits (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    file_path  TEXT NOT NULL,
+    tool_name  TEXT,
+    edited_at  TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_file_edits_session ON file_edits(session_id);
+  CREATE INDEX IF NOT EXISTS idx_file_edits_path ON file_edits(file_path);
 `);
 
 // ──────────────────────────────────────────────
@@ -165,6 +176,25 @@ const stmts = {
     LEFT JOIN heartbeats h ON s.session_id = h.session_id
     WHERE s.status IN ('active', 'waiting_permission')
   `),
+
+  insertFileEdit: db.prepare(
+    `INSERT INTO file_edits (session_id, file_path, tool_name) VALUES (@session_id, @file_path, @tool_name)`
+  ),
+  getFilesBySession: db.prepare(
+    `SELECT file_path, tool_name, MAX(edited_at) as last_edited
+     FROM file_edits WHERE session_id = @session_id
+     GROUP BY file_path ORDER BY last_edited DESC LIMIT 20`
+  ),
+  getActiveFileConflicts: db.prepare(
+    `SELECT fe.file_path, GROUP_CONCAT(DISTINCT fe.session_id) as session_ids
+     FROM file_edits fe
+     JOIN sessions s ON s.session_id = fe.session_id
+     WHERE s.status != 'stopped'
+       AND s.project = @project
+       AND fe.edited_at > datetime('now', '-30 minutes')
+     GROUP BY fe.file_path
+     HAVING COUNT(DISTINCT fe.session_id) > 1`
+  ),
 };
 
 // ──────────────────────────────────────────────
@@ -230,6 +260,16 @@ export function getActiveSessions() {
 
 export function ensureSession(session_id) {
   return stmts.ensureSession.run({ session_id });
+}
+
+export function insertFileEdit(session_id, file_path, tool_name) {
+  return stmts.insertFileEdit.run({ session_id, file_path, tool_name });
+}
+export function getFilesBySession(session_id) {
+  return stmts.getFilesBySession.all({ session_id });
+}
+export function getActiveFileConflicts(project) {
+  return stmts.getActiveFileConflicts.all({ project });
 }
 
 const setPendingStmt = db.prepare(`

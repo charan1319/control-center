@@ -697,7 +697,26 @@ export async function buildServer(opts = {}) {
       // 'waiting_permission' back to 'active' if a late heartbeat arrives)
       db.ensureSession(session_id);
       db.upsertHeartbeat({ session_id, tool_name: payload.tool_name });
-      broadcastEvent({ event, session_id, tool_name: payload.tool_name, timestamp: payload.timestamp });
+      if (payload.file_path) {
+        db.insertFileEdit(session_id, payload.file_path, payload.tool_name);
+      }
+      const heartbeatBroadcast = { event, session_id, tool_name: payload.tool_name, timestamp: payload.timestamp };
+      if (payload.file_path) heartbeatBroadcast.file_path = payload.file_path;
+      broadcastEvent(heartbeatBroadcast);
+      if (payload.file_path) {
+        const session = db.getSession(session_id);
+        if (session) {
+          const updateMsg = { type: 'session_update', session };
+          if (session.project) {
+            const conflicts = db.getActiveFileConflicts(session.project);
+            if (conflicts.length > 0) updateMsg.file_conflicts = conflicts;
+          }
+          const msg = JSON.stringify(updateMsg);
+          for (const client of dashboardClients) {
+            try { if (client.readyState === 1) client.send(msg); } catch { /* client gone */ }
+          }
+        }
+      }
       return reply.status(204).send();
     }
 
@@ -1067,6 +1086,15 @@ export async function buildServer(opts = {}) {
       if (updated) broadcastSessionUpdate(updated);
     }
     return { cleaned: stoppedIds.length };
+  });
+
+  // ──────────────────────────────────────────────
+  // REST: File edits per session
+  // ──────────────────────────────────────────────
+
+  fastify.get('/api/sessions/:id/files', async (request) => {
+    const files = db.getFilesBySession(request.params.id);
+    return { files };
   });
 
   // ──────────────────────────────────────────────

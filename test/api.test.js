@@ -276,3 +276,113 @@ describe('GET /api/sessions/:id/transcript', () => {
     assert.equal(res.statusCode, 404);
   });
 });
+
+describe('File edit tracking', () => {
+  const FILE_SESSION = 'file-edit-test-1';
+  const FILE_SESSION_2 = 'file-edit-test-2';
+
+  before(async () => {
+    // Create two sessions in the same project
+    await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'SessionStart',
+        session_id: FILE_SESSION,
+        cwd: '/tmp/proj-files',
+        tmux_session: 'cc-file-1',
+      },
+    });
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/sessions/${FILE_SESSION}`,
+      payload: { project: 'file-test-project' },
+    });
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'SessionStart',
+        session_id: FILE_SESSION_2,
+        cwd: '/tmp/proj-files',
+        tmux_session: 'cc-file-2',
+      },
+    });
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/sessions/${FILE_SESSION_2}`,
+      payload: { project: 'file-test-project' },
+    });
+  });
+
+  it('Heartbeat with file_path records a file edit', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'Heartbeat',
+        session_id: FILE_SESSION,
+        tool_name: 'Write',
+        file_path: '/tmp/proj-files/src/index.js',
+      },
+    });
+    assert.equal(res.statusCode, 204);
+  });
+
+  it('GET /api/sessions/:id/files returns file edits for a session', async () => {
+    const res = await app.inject({ method: 'GET', url: `/api/sessions/${FILE_SESSION}/files` });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.ok(Array.isArray(body.files));
+    assert.ok(body.files.length >= 1);
+    const entry = body.files.find(f => f.file_path === '/tmp/proj-files/src/index.js');
+    assert.ok(entry);
+    assert.equal(entry.tool_name, 'Write');
+    assert.ok(entry.last_edited);
+  });
+
+  it('GET /api/sessions/:id/files returns empty array for session with no edits', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/nonexistent-file-session/files' });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json(), { files: [] });
+  });
+
+  it('Heartbeat without file_path does not record a file edit', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'Heartbeat',
+        session_id: FILE_SESSION,
+        tool_name: 'Read',
+      },
+    });
+
+    const res = await app.inject({ method: 'GET', url: `/api/sessions/${FILE_SESSION}/files` });
+    const body = res.json();
+    // Should still only have the one Write edit, not a Read entry
+    assert.ok(!body.files.some(f => f.tool_name === 'Read'));
+  });
+
+  it('detects file conflicts when two sessions edit the same file in same project', async () => {
+    // Second session edits the same file
+    await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'Heartbeat',
+        session_id: FILE_SESSION_2,
+        tool_name: 'Edit',
+        file_path: '/tmp/proj-files/src/index.js',
+      },
+    });
+
+    // Verify both sessions have the file
+    const res1 = await app.inject({ method: 'GET', url: `/api/sessions/${FILE_SESSION}/files` });
+    assert.ok(res1.json().files.some(f => f.file_path === '/tmp/proj-files/src/index.js'));
+
+    const res2 = await app.inject({ method: 'GET', url: `/api/sessions/${FILE_SESSION_2}/files` });
+    assert.ok(res2.json().files.some(f => f.file_path === '/tmp/proj-files/src/index.js'));
+  });
+});
