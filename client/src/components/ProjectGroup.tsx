@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { projectColor } from '../utils';
 import { SessionCard } from './SessionCard';
+import { PulsePanel } from './PulsePanel';
 import type { Session, SessionEvent, ServerInfo } from '../types';
 import './ProjectGroup.css';
 
@@ -21,6 +23,7 @@ export function ProjectGroup({
   recentEvents,
 }: ProjectGroupProps) {
   const color = projectColor(projectName);
+  const [pulseOpen, setPulseOpen] = useState(false);
 
   return (
     <div className="project-group">
@@ -30,6 +33,12 @@ export function ProjectGroup({
           style={color ? { color, borderLeftColor: color } : undefined}
         >
           {projectName}
+          <button
+            className="btn-pulse"
+            onClick={() => setPulseOpen(true)}
+          >
+            Pulse
+          </button>
         </div>
       )}
       <div className="project-sessions">
@@ -44,6 +53,9 @@ export function ProjectGroup({
           />
         ))}
       </div>
+      {pulseOpen && projectName && (
+        <PulsePanel project={projectName} onClose={() => setPulseOpen(false)} />
+      )}
     </div>
   );
 }

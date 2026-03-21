@@ -106,6 +106,17 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
     setSnapshotOpen(true);
   }, []);
 
+  const handlePulseToggle = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await api.patchSession(session.session_id, {
+        pulse_enabled: session.pulse_enabled ? 0 : 1,
+      });
+    } catch {
+      // handled by WS update
+    }
+  }, [session.session_id, session.pulse_enabled]);
+
   return (
     <div
       className={`session-card status-${statusClass}${isSelected ? ' selected' : ''}`}
@@ -176,6 +187,15 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
             Revert
           </button>
         )}
+        {session.project && (
+          <button
+            className={`btn-pulse-toggle${session.pulse_enabled ? ' pulse-on' : ''}`}
+            onClick={handlePulseToggle}
+            title={session.pulse_enabled ? 'Pulse reporting enabled' : 'Pulse reporting disabled'}
+          >
+            Pulse {session.pulse_enabled ? 'On' : 'Off'}
+          </button>
+        )}
         {showKill && (
           <button
             className={`btn-kill${isServerSession ? ' btn-kill-protected' : ''}`}
@@ -219,6 +239,7 @@ export const SessionCard = React.memo(SessionCardInner, (prev, next) => {
     prev.session.last_heartbeat === next.session.last_heartbeat &&
     prev.session.status === next.session.status &&
     prev.session.pending_tool === next.session.pending_tool &&
+    prev.session.pulse_enabled === next.session.pulse_enabled &&
     prev.isSelected === next.isSelected
   );
 });

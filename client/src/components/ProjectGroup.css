@@ -14,6 +14,30 @@
   color: var(--ctp-overlay0);
   padding: 2px 6px;
   border-left: 3px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-pulse {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border: 1px solid var(--ctp-surface2);
+  border-radius: 4px;
+  background: var(--ctp-surface0);
+  color: var(--ctp-lavender);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-pulse:hover {
+  background: var(--ctp-surface1);
+  border-color: var(--ctp-lavender);
 }
 
 /* Single column on mobile */
