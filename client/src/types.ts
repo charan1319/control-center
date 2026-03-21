@@ -50,7 +50,10 @@ export interface FileEdit {
 
 export interface TranscriptEntry {
   type: 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'thinking' | 'system';
+  subtype?: 'task_notification' | 'compact' | 'local_command';
   content: string;
+  detail?: string;
+  status?: string;
   tool_name?: string;
   tool_input_summary?: string;
   tool_input_full?: string;

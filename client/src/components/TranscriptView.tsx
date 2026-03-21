@@ -165,12 +165,72 @@ function renderEntry({ entry, result }: PairedEntry, index: number) {
         </div>
       );
 
-    case 'system':
+    case 'system': {
+      // Skip empty system entries (local commands, pulse injections)
+      if (!entry.content && !entry.detail) return null;
+
+      const subtype = entry.subtype;
+
+      // Task/subagent notification — collapsible with result detail
+      if (subtype === 'task_notification') {
+        const icon = entry.status === 'completed' ? '\u2705' : '\u26a0\ufe0f';
+        if (entry.detail) {
+          return (
+            <details key={index} className="tx-entry tx-system-details tx-system-task">
+              <summary>
+                <span className="tx-system-summary-inner">
+                  <span className="tx-system-icon">{icon}</span>
+                  <span className="tx-system-text">{safeString(entry.content)}</span>
+                </span>
+              </summary>
+              <div
+                className="tx-system-detail-body"
+                dangerouslySetInnerHTML={{ __html: formatAssistantHtml(safeString(entry.detail)) }}
+              />
+            </details>
+          );
+        }
+        return (
+          <div key={index} className="tx-entry tx-system tx-system-task">
+            <span className="tx-system-icon">{icon}</span>
+            <span className="tx-system-text">{safeString(entry.content)}</span>
+          </div>
+        );
+      }
+
+      // Compact continuation — collapsible with summary detail
+      if (subtype === 'compact') {
+        if (entry.detail) {
+          return (
+            <details key={index} className="tx-entry tx-system-details tx-system-compact">
+              <summary>
+                <span className="tx-system-summary-inner">
+                  <span className="tx-system-icon">{'\ud83d\udce6'}</span>
+                  <span className="tx-system-text">Context compacted</span>
+                </span>
+              </summary>
+              <div
+                className="tx-system-detail-body"
+                dangerouslySetInnerHTML={{ __html: formatAssistantHtml(safeString(entry.detail)) }}
+              />
+            </details>
+          );
+        }
+        return (
+          <div key={index} className="tx-entry tx-system tx-system-compact">
+            <span className="tx-system-icon">{'\ud83d\udce6'}</span>
+            <span className="tx-system-text">Context compacted</span>
+          </div>
+        );
+      }
+
+      // Default system entry
       return (
         <div key={index} className="tx-entry tx-system">
           {safeString(entry.content)}
         </div>
       );
+    }
 
     default:
       return null;

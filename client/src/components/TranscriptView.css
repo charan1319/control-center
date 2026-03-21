@@ -342,6 +342,89 @@
   padding: 2px 0;
 }
 
+/* Collapsible system entries (task notifications, compact) */
+.tx-system-details {
+  font-size: 12px;
+  color: var(--ctp-subtext0);
+  border-left: 2px solid var(--ctp-surface1);
+  padding: 4px 0 4px 10px;
+  margin: 2px 0;
+}
+
+.tx-system-details > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.tx-system-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tx-system-summary-inner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tx-system-icon {
+  font-style: normal;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.tx-system-text {
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.tx-system-details[open] > summary .tx-system-text {
+  opacity: 1;
+}
+
+.tx-system-detail-body {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--ctp-mantle);
+  border-radius: 4px;
+  font-size: 12px;
+  font-style: normal;
+  color: var(--ctp-subtext1);
+  line-height: 1.5;
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tx-system-detail-body pre {
+  background: var(--ctp-crust);
+  padding: 6px 8px;
+  border-radius: 3px;
+  overflow-x: auto;
+  font-size: 11px;
+}
+
+/* Non-collapsible system entries with icon */
+.tx-system.tx-system-task,
+.tx-system.tx-system-compact {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+}
+
+/* Task notification accent */
+.tx-system-task {
+  border-left-color: var(--ctp-green);
+}
+
+/* Compact accent */
+.tx-system-compact {
+  border-left-color: var(--ctp-mauve);
+}
+
 /* ─── Empty state ─── */
 .transcript-empty {
   flex: 1;

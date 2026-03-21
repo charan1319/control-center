@@ -63,6 +63,57 @@ function summarizeToolInput(toolName, input) {
 }
 
 /**
+ * Detect system-injected content masquerading as user messages.
+ * Returns a system entry object if matched, or null for real user input.
+ */
+function classifySystemInjection(text, timestamp) {
+  const trimmed = text.trim();
+
+  // Task/subagent notifications: <task-notification>...<summary>X</summary>...<result>Y</result>...</task-notification>
+  if (trimmed.startsWith('<task-notification>')) {
+    const summaryMatch = trimmed.match(/<summary>([\s\S]*?)<\/summary>/);
+    const resultMatch = trimmed.match(/<result>([\s\S]*?)<\/result>/);
+    const statusMatch = trimmed.match(/<status>([\s\S]*?)<\/status>/);
+    return {
+      type: 'system',
+      subtype: 'task_notification',
+      content: summaryMatch ? summaryMatch[1].trim() : 'Task completed',
+      detail: resultMatch ? resultMatch[1].trim() : '',
+      status: statusMatch ? statusMatch[1].trim() : '',
+      timestamp,
+    };
+  }
+
+  // Compact continuation: "This session is being continued from a previous conversation..."
+  if (trimmed.startsWith('This session is being continued from a previous conversation')) {
+    // Extract the summary portion after "Summary:"
+    const summaryIdx = trimmed.indexOf('Summary:');
+    const detail = summaryIdx !== -1 ? trimmed.slice(summaryIdx + 'Summary:'.length).trim() : '';
+    return {
+      type: 'system',
+      subtype: 'compact',
+      content: 'Context compacted',
+      detail,
+      timestamp,
+    };
+  }
+
+  // Local command infrastructure — not useful to display
+  if (trimmed.startsWith('<local-command-caveat>') ||
+      trimmed.startsWith('<command-name>') ||
+      trimmed.startsWith('<local-command-stdout>')) {
+    return { type: 'system', subtype: 'local_command', content: '', timestamp };
+  }
+
+  // Project context pulse injection
+  if (trimmed.startsWith('[Project context')) {
+    return { type: 'system', subtype: 'local_command', content: '', timestamp };
+  }
+
+  return null;
+}
+
+/**
  * Read the tail of a JSONL transcript file and return a structured array of entries.
  *
  * Each entry has: { type, content, tool_name?, tool_input_summary?, tool_input_full?, tool_result?, is_error?, timestamp? }
@@ -117,9 +168,17 @@ export function readTranscriptStructured(filePath, maxBytes = 65536) {
               }
             }
             const userText = textParts.join('\n');
-            if (userText) entries.push({ type: 'user', content: userText, timestamp });
+            if (userText) {
+              const systemEntry = classifySystemInjection(userText, timestamp);
+              if (systemEntry) entries.push(systemEntry);
+              else entries.push({ type: 'user', content: userText, timestamp });
+            }
           } else if (typeof content === 'string') {
-            if (content) entries.push({ type: 'user', content, timestamp });
+            if (content) {
+              const systemEntry = classifySystemInjection(content, timestamp);
+              if (systemEntry) entries.push(systemEntry);
+              else entries.push({ type: 'user', content, timestamp });
+            }
           }
 
         } else if (obj.type === 'assistant') {
@@ -161,8 +220,10 @@ export function readTranscriptStructured(filePath, maxBytes = 65536) {
           });
 
         } else if (obj.type === 'queue-operation' && obj.operation === 'enqueue' && obj.content) {
-          // Message queued while Claude was busy — treat as user input
-          entries.push({ type: 'user', content: obj.content, timestamp });
+          // Message queued while Claude was busy — treat as user input (unless system-injected)
+          const systemEntry = classifySystemInjection(obj.content, timestamp);
+          if (systemEntry) entries.push(systemEntry);
+          else entries.push({ type: 'user', content: obj.content, timestamp });
         }
       }
     } finally {
