@@ -131,11 +131,13 @@ function renderEntry({ entry, result }: PairedEntry, index: number) {
       return (
         <details key={index} className="tx-entry tx-tool">
           <summary>
-            <span className="tx-tool-icon">{icon}</span>
-            <span className="tx-tool-name">{entry.tool_name}</span>
-            {entry.tool_input_summary && (
-              <span className="tx-tool-summary">{entry.tool_input_summary}</span>
-            )}
+            <span className="tx-tool-summary-inner">
+              <span className="tx-tool-icon">{icon}</span>
+              <span className="tx-tool-name">{entry.tool_name}</span>
+              {entry.tool_input_summary && (
+                <span className="tx-tool-summary">{entry.tool_input_summary}</span>
+              )}
+            </span>
           </summary>
           {entry.tool_input_full && (
             <div className="tx-tool-body">

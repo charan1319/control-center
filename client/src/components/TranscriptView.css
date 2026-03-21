@@ -226,9 +226,14 @@
   color: var(--ctp-subtext0);
   list-style: none;
   user-select: none;
+}
+
+/* Inner span gets flex — display:flex directly on <summary> breaks Safari/WebKit */
+.tx-tool-summary-inner {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
 }
 
 .tx-tool > summary:hover {
@@ -239,7 +244,7 @@
   display: none;
 }
 
-.tx-tool > summary::before {
+.tx-tool > summary .tx-tool-summary-inner::before {
   content: "\25b6";
   font-size: 9px;
   transition: transform 0.15s;
@@ -247,7 +252,7 @@
   color: var(--color-muted);
 }
 
-.tx-tool[open] > summary::before {
+.tx-tool[open] > summary .tx-tool-summary-inner::before {
   transform: rotate(90deg);
 }
 
