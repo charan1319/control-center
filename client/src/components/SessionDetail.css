@@ -12,14 +12,14 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
-  background: var(--ctp-surface0);
-  border-bottom: 1px solid var(--ctp-surface1);
+  padding: 10px 12px;
+  background: var(--ctp-mantle);
+  border-bottom: 1px solid var(--ctp-surface0);
   flex-shrink: 0;
 }
 
 .sd-label {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
   color: var(--ctp-text);
@@ -41,9 +41,9 @@
 }
 
 .sd-status-badge.active {
-  background: color-mix(in srgb, var(--ctp-green) 15%, transparent);
-  color: var(--ctp-green);
-  border: 1px solid color-mix(in srgb, var(--ctp-green) 30%, transparent);
+  background: color-mix(in srgb, var(--color-success) 15%, transparent);
+  color: var(--color-success);
+  border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent);
 }
 
 .sd-status-badge.idle {
@@ -53,16 +53,16 @@
 }
 
 .sd-status-badge.waiting {
-  background: color-mix(in srgb, var(--ctp-red) 15%, transparent);
-  color: var(--ctp-red);
-  border: 1px solid color-mix(in srgb, var(--ctp-red) 30%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
   animation: sdBadgePulse 1.5s infinite;
 }
 
 .sd-status-badge.stopped {
-  background: color-mix(in srgb, var(--ctp-overlay0) 15%, transparent);
-  color: var(--ctp-overlay0);
-  border: 1px solid color-mix(in srgb, var(--ctp-overlay0) 30%, transparent);
+  background: color-mix(in srgb, var(--color-muted) 15%, transparent);
+  color: var(--color-muted);
+  border: 1px solid color-mix(in srgb, var(--color-muted) 30%, transparent);
 }
 
 @keyframes sdBadgePulse {
@@ -81,7 +81,7 @@
   justify-content: center;
   background: transparent;
   border: none;
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -93,7 +93,7 @@
 /* ─── Tab bar ─── */
 .sd-tabs {
   display: flex;
-  border-bottom: 1px solid var(--ctp-surface1);
+  border-bottom: 1px solid var(--ctp-surface0);
   background: var(--ctp-mantle);
   flex-shrink: 0;
 }
@@ -103,7 +103,7 @@
   min-height: 44px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
@@ -114,8 +114,8 @@
 }
 
 .sd-tab.active {
-  color: var(--ctp-blue);
-  border-bottom-color: var(--ctp-blue);
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
 }
 
 /* ─── Content area ─── */
@@ -130,7 +130,11 @@
 /* ─── Tablet+ ─── */
 @media (min-width: 768px) {
   .sd-header {
-    padding: 10px 16px;
+    padding: 12px 16px;
+  }
+
+  .sd-label {
+    font-size: 16px;
   }
 
   .sd-tab {

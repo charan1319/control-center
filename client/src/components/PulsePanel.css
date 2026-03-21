@@ -36,7 +36,7 @@
 
 .pulse-header h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 600;
   color: var(--ctp-text);
 }
@@ -59,7 +59,7 @@
 }
 
 .pulse-loading {
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
   font-size: 13px;
   font-style: italic;
 }
@@ -71,7 +71,7 @@
 }
 
 .pulse-markdown h2 {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--ctp-text);
   margin: 16px 0 8px 0;
@@ -84,7 +84,7 @@
 .pulse-markdown h3 {
   font-size: 13px;
   font-weight: 600;
-  color: var(--ctp-subtext0);
+  color: var(--color-info);
   margin: 12px 0 6px 0;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -142,7 +142,7 @@
 }
 
 .pulse-save-indicator.saved {
-  color: var(--ctp-green);
+  color: var(--color-success);
 }
 
 .pulse-notes-textarea {
@@ -163,11 +163,11 @@
 }
 
 .pulse-notes-textarea:focus {
-  border-color: var(--ctp-blue);
+  border-color: var(--color-primary);
 }
 
 .pulse-notes-textarea::placeholder {
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
 }
 
 /* ─── Tablet+ ─── */

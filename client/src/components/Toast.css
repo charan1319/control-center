@@ -36,24 +36,24 @@
 }
 
 .toast-info {
-  border-color: var(--ctp-blue);
+  border-color: var(--color-info);
 }
 .toast-info .toast-dot {
-  background: var(--ctp-blue);
+  background: var(--color-info);
 }
 
 .toast-success {
-  border-color: var(--ctp-green);
+  border-color: var(--color-success);
 }
 .toast-success .toast-dot {
-  background: var(--ctp-green);
+  background: var(--color-success);
 }
 
 .toast-error {
-  border-color: var(--ctp-red);
+  border-color: var(--color-danger);
 }
 .toast-error .toast-dot {
-  background: var(--ctp-red);
+  background: var(--color-danger);
 }
 
 @keyframes toastSlideIn {

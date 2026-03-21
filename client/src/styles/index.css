@@ -1,4 +1,5 @@
 :root {
+  /* ─── Catppuccin Mocha palette ─── */
   --ctp-rosewater: #f5e0dc;
   --ctp-flamingo: #f2cdcd;
   --ctp-pink: #f5c2e7;
@@ -25,6 +26,16 @@
   --ctp-base: #1e1e2e;
   --ctp-mantle: #181825;
   --ctp-crust: #11111b;
+
+  /* ─── Semantic color roles ─── */
+  --color-primary: var(--ctp-blue);          /* primary actions, focus rings */
+  --color-secondary: var(--ctp-mauve);       /* interactive accents, user identity */
+  --color-accent: var(--ctp-lavender);       /* highlights, selected states */
+  --color-success: var(--ctp-green);         /* active, healthy, confirmed */
+  --color-warning: var(--ctp-peach);         /* waiting, attention needed */
+  --color-danger: var(--ctp-red);            /* errors, destructive actions */
+  --color-info: var(--ctp-teal);             /* informational badges, metadata */
+  --color-muted: var(--ctp-overlay0);        /* disabled, inactive, captions */
 }
 
 *, *::before, *::after {
@@ -34,7 +45,7 @@
 html, body {
   margin: 0;
   padding: 0;
-  background: var(--ctp-base);
+  background: var(--ctp-crust);
   color: var(--ctp-text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   font-size: 14px;

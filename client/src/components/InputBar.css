@@ -6,7 +6,7 @@
   gap: 6px;
   padding: 6px 8px;
   background: var(--ctp-mantle);
-  border-top: 1px solid var(--ctp-surface1);
+  border-top: 1px solid var(--ctp-surface0);
   flex-shrink: 0;
 }
 
@@ -25,21 +25,22 @@
   resize: none;
   outline: none;
   overflow-y: auto;
+  transition: border-color 0.15s;
 }
 
 .input-bar-textarea:focus {
-  border-color: var(--ctp-blue);
+  border-color: var(--color-primary);
 }
 
 .input-bar-textarea::placeholder {
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
 }
 
 .input-bar-send {
   padding: 8px 14px;
   min-height: 44px;
-  background: var(--ctp-blue);
-  color: var(--ctp-base);
+  background: var(--color-primary);
+  color: var(--ctp-crust);
   border: none;
   border-radius: 8px;
   font-size: 13px;

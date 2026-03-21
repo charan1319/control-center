@@ -4,6 +4,7 @@
   flex-direction: column;
   min-height: 0;
   position: relative;
+  background: var(--ctp-crust);
 }
 
 .terminal-container {
@@ -24,7 +25,7 @@
   justify-content: center;
   gap: 10px;
   height: 100%;
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
   font-size: 13px;
 }
 
@@ -32,7 +33,7 @@
   width: 18px;
   height: 18px;
   border: 2px solid var(--ctp-surface1);
-  border-top-color: var(--ctp-blue);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: termSpin 0.7s linear infinite;
 }
@@ -46,7 +47,7 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--ctp-red);
+  color: var(--color-danger);
   font-size: 13px;
   padding: 16px;
   text-align: center;

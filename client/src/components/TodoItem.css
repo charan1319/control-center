@@ -5,16 +5,16 @@
   flex-direction: column;
   background: var(--ctp-surface0);
   border-radius: 6px;
-  border-left: 3px solid var(--ctp-overlay0);
+  border-left: 3px solid var(--color-muted);
   transition: border-color 0.2s;
 }
 
 .todo-item.status-in_progress {
-  border-left-color: var(--ctp-blue);
+  border-left-color: var(--color-primary);
 }
 
 .todo-item.status-done {
-  border-left-color: var(--ctp-green);
+  border-left-color: var(--color-success);
 }
 
 .todo-item[draggable="true"] {
@@ -26,7 +26,7 @@
 }
 
 .todo-item.status-pending {
-  border-left-color: var(--ctp-overlay0);
+  border-left-color: var(--color-muted);
 }
 
 /* Row layout */
@@ -47,21 +47,21 @@
 }
 
 .todo-status-dot.pending {
-  background: var(--ctp-overlay0);
+  background: var(--color-muted);
 }
 
 .todo-status-dot.in_progress {
-  background: var(--ctp-blue);
+  background: var(--color-primary);
   animation: todoPulse 1.5s infinite;
 }
 
 .todo-status-dot.done {
-  background: var(--ctp-green);
+  background: var(--color-success);
 }
 
 @keyframes todoPulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--ctp-blue); }
-  50% { opacity: 0.6; box-shadow: 0 0 4px 1px var(--ctp-blue); }
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--color-primary); }
+  50% { opacity: 0.6; box-shadow: 0 0 4px 1px var(--color-primary); }
 }
 
 /* Title */
@@ -95,28 +95,28 @@
   min-height: 32px;
   min-width: 44px;
   border-radius: 4px;
-  border: 1px solid var(--ctp-surface1);
-  background: var(--ctp-surface0);
-  color: var(--ctp-text);
+  border: 1px solid var(--ctp-surface2);
+  background: var(--ctp-mantle);
+  color: var(--ctp-subtext0);
   cursor: pointer;
-  transition: background 0.15s, opacity 0.1s;
+  transition: background 0.15s, opacity 0.1s, color 0.15s, border-color 0.15s;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
 
 .todo-actions .btn-todo-launch {
-  color: var(--ctp-blue);
-  border-color: var(--ctp-blue);
+  color: var(--color-primary);
+  border-color: color-mix(in srgb, var(--color-primary) 40%, var(--ctp-surface2));
 }
 
 .todo-actions .btn-todo-done {
-  color: var(--ctp-green);
-  border-color: var(--ctp-green);
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 40%, var(--ctp-surface2));
 }
 
 .todo-actions .btn-todo-delete {
-  color: var(--ctp-red);
-  border-color: var(--ctp-red);
+  color: var(--ctp-overlay1);
+  border-color: var(--ctp-surface2);
 }
 
 /* Expanded details area */
@@ -139,7 +139,7 @@
 
 .todo-details-textarea:focus {
   outline: none;
-  border-color: var(--ctp-blue);
+  border-color: var(--color-primary);
 }
 
 /* Launch confirmation popover */
@@ -160,7 +160,7 @@
 }
 
 .todo-launch-popover input[type="checkbox"] {
-  accent-color: var(--ctp-blue);
+  accent-color: var(--color-primary);
 }
 
 .todo-launch-popover-actions {
@@ -182,9 +182,9 @@
 }
 
 .todo-launch-popover-actions .btn-confirm-launch {
-  color: var(--ctp-base);
-  background: var(--ctp-blue);
-  border-color: var(--ctp-blue);
+  color: var(--ctp-crust);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
   font-weight: 600;
 }
 
@@ -195,7 +195,7 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--ctp-peach);
+  color: var(--color-warning);
 }
 
 .todo-stopped-prompt button {
@@ -212,12 +212,12 @@
 }
 
 .todo-stopped-prompt .btn-yes {
-  color: var(--ctp-green);
-  border-color: var(--ctp-green);
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 40%, var(--ctp-surface2));
 }
 
 .todo-stopped-prompt .btn-no {
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
   border-color: var(--ctp-surface2);
 }
 
@@ -241,19 +241,24 @@
 /* ─── Tablet+ ─── */
 @media (min-width: 768px) {
   .todo-actions button:hover {
-    background: var(--ctp-surface1);
+    background: var(--ctp-surface0);
+    color: var(--ctp-text);
   }
 
   .todo-actions .btn-todo-launch:hover {
-    background: rgba(137, 180, 250, 0.15);
+    background: color-mix(in srgb, var(--color-primary) 10%, var(--ctp-mantle));
+    border-color: var(--color-primary);
   }
 
   .todo-actions .btn-todo-done:hover {
-    background: rgba(166, 227, 161, 0.15);
+    background: color-mix(in srgb, var(--color-success) 10%, var(--ctp-mantle));
+    border-color: var(--color-success);
   }
 
   .todo-actions .btn-todo-delete:hover {
-    background: rgba(243, 139, 168, 0.15);
+    color: var(--color-danger);
+    border-color: color-mix(in srgb, var(--color-danger) 40%, var(--ctp-surface2));
+    background: color-mix(in srgb, var(--color-danger) 8%, var(--ctp-mantle));
   }
 
   .todo-launch-popover-actions .btn-confirm-launch:hover {

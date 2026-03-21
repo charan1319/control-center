@@ -18,7 +18,7 @@
   width: 18px;
   height: 18px;
   border: 2px solid var(--ctp-surface2);
-  border-top-color: var(--ctp-blue);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: snapshot-spin 0.7s linear infinite;
 }
@@ -54,7 +54,7 @@
 }
 
 .snapshot-section-header.added {
-  color: var(--ctp-red);
+  color: var(--color-danger);
 }
 
 .snapshot-section-header.modified {
@@ -62,13 +62,13 @@
 }
 
 .snapshot-section-header.deleted {
-  color: var(--ctp-green);
+  color: var(--color-success);
 }
 
 .snapshot-section-hint {
   font-weight: 400;
   font-size: 11px;
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
   text-transform: none;
   letter-spacing: normal;
 }
@@ -102,7 +102,7 @@
 }
 
 .snapshot-file-icon.added {
-  color: var(--ctp-red);
+  color: var(--color-danger);
 }
 
 .snapshot-file-icon.modified {
@@ -110,7 +110,7 @@
 }
 
 .snapshot-file-icon.deleted {
-  color: var(--ctp-green);
+  color: var(--color-success);
 }
 
 .snapshot-file-path {
@@ -119,7 +119,7 @@
 
 /* Confirm Revert button — warning style */
 .modal-btn-warning {
-  background: var(--ctp-peach);
+  background: var(--color-warning);
   color: var(--ctp-crust);
 }
 

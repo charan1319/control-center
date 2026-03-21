@@ -52,7 +52,7 @@
   width: 18px;
   height: 18px;
   border: 2px solid var(--ctp-surface1);
-  border-top-color: var(--ctp-blue);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: txSpin 0.7s linear infinite;
 }
@@ -94,11 +94,11 @@
 /* ─── User ─── */
 .tx-user {
   color: var(--ctp-text);
-  padding: 10px 12px;
+  padding: 10px 14px;
   margin-top: 16px;
-  background: color-mix(in srgb, var(--ctp-mauve) 5%, transparent);
-  border-left: 3px solid var(--ctp-mauve);
-  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--color-secondary) 8%, var(--ctp-mantle));
+  border: 1px solid color-mix(in srgb, var(--color-secondary) 15%, var(--ctp-surface0));
+  border-radius: 10px;
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }
@@ -109,14 +109,17 @@
 
 .tx-user-prefix {
   font-weight: 700;
-  color: var(--ctp-mauve);
+  color: var(--color-secondary);
   margin-right: 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 /* Queued/pending user message — shown immediately on send before transcript confirms */
 .tx-user.tx-queued {
   opacity: 0.6;
-  border-left-style: dashed;
+  border-style: dashed;
 }
 
 /* ─── Thinking (compact — matches Claude Code behavior) ─── */
@@ -129,7 +132,7 @@
 
 /* ─── Thinking (expandable — kept for reference) ─── */
 .tx-thinking {
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
   font-style: italic;
   font-size: 12px;
 }
@@ -164,23 +167,24 @@
 .tx-thinking-content {
   padding: 2px 0 2px 16px;
   white-space: pre-wrap;
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
 }
 
 /* ─── Assistant ─── */
 .tx-assistant {
   color: var(--ctp-text);
-  padding: 4px 0;
+  padding: 8px 0;
   white-space: pre-wrap;
   overflow-wrap: break-word;
+  line-height: 1.7;
 }
 
 .tx-assistant pre {
   margin: 8px 0;
-  padding: 10px 12px;
-  background: var(--ctp-mantle);
+  padding: 12px 14px;
+  background: var(--ctp-crust);
   border: 1px solid var(--ctp-surface0);
-  border-radius: 6px;
+  border-radius: 8px;
   overflow-x: auto;
   font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
   font-size: 13px;
@@ -194,9 +198,10 @@
 
 .tx-assistant code.tx-inline-code {
   background: var(--ctp-surface0);
-  padding: 1px 4px;
-  border-radius: 2px;
+  padding: 1px 5px;
+  border-radius: 3px;
   font-size: 0.92em;
+  color: var(--color-info);
 }
 
 .tx-assistant strong {
@@ -207,8 +212,9 @@
 /* ─── Tool use ─── */
 .tx-tool {
   background: var(--ctp-mantle);
-  border-radius: 6px;
-  margin: 4px 0;
+  border: 1px solid var(--ctp-surface0);
+  border-radius: 8px;
+  margin: 6px 0;
   overflow: hidden;
 }
 
@@ -238,7 +244,7 @@
   font-size: 9px;
   transition: transform 0.15s;
   flex-shrink: 0;
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
 }
 
 .tx-tool[open] > summary::before {
@@ -252,7 +258,7 @@
 
 .tx-tool-name {
   font-weight: 600;
-  color: var(--ctp-mauve);
+  color: var(--color-secondary);
 }
 
 .tx-tool-summary {
@@ -289,7 +295,7 @@
   font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
   color: var(--ctp-overlay1);
   border-top: 1px solid var(--ctp-surface0);
-  border-left: 3px solid var(--ctp-green);
+  border-left: 3px solid var(--color-success);
   white-space: pre-wrap;
   word-break: break-all;
   max-height: 200px;
@@ -297,15 +303,15 @@
 }
 
 .tx-tool-result.tx-error {
-  border-left-color: var(--ctp-red);
-  color: var(--ctp-red);
+  border-left-color: var(--color-danger);
+  color: var(--color-danger);
 }
 
 /* ─── Tool spinner (no result yet) ─── */
 .tx-tool-pending {
   padding: 6px 12px;
   font-size: 12px;
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
   border-top: 1px solid var(--ctp-surface0);
   display: flex;
   align-items: center;
@@ -337,14 +343,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
   font-size: 13px;
 }
 
 /* ─── Error state ─── */
 .transcript-error {
   padding: 12px;
-  color: var(--ctp-red);
+  color: var(--color-danger);
   font-size: 13px;
   text-align: center;
 }
@@ -355,7 +361,7 @@
   align-items: center;
   gap: 8px;
   padding: 8px 0;
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
   font-size: 12px;
 }
 
@@ -368,7 +374,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--ctp-mauve);
+  background: var(--color-secondary);
   animation: txDotPulse 1.4s ease-in-out infinite;
 }
 
@@ -388,11 +394,11 @@
 .tx-live-permission {
   display: flex;
   gap: 10px;
-  padding: 10px;
+  padding: 12px;
   margin-top: 8px;
-  background: color-mix(in srgb, var(--ctp-red) 8%, var(--ctp-surface0));
-  border: 1px solid color-mix(in srgb, var(--ctp-red) 30%, var(--ctp-surface1));
-  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--ctp-surface0));
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, var(--ctp-surface0));
+  border-radius: 8px;
 }
 
 .tx-live-permission-icon {
@@ -408,7 +414,7 @@
 
 .tx-live-permission-title {
   font-weight: 600;
-  color: var(--ctp-red);
+  color: var(--color-warning);
   font-size: 13px;
   margin-bottom: 2px;
 }
@@ -421,20 +427,21 @@
 }
 
 .tx-live-permission-grant {
-  padding: 6px 16px;
-  border-radius: 4px;
+  padding: 8px 20px;
+  border-radius: 6px;
   border: none;
-  background: var(--ctp-red);
-  color: var(--ctp-base);
-  font-weight: 600;
+  background: var(--color-success);
+  color: var(--ctp-crust);
+  font-weight: 700;
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
   min-height: 36px;
+  transition: opacity 0.15s;
 }
 
 .tx-live-permission-grant:hover {
-  filter: brightness(1.1);
+  opacity: 0.9;
 }
 
 .tx-live-permission-grant:disabled {
@@ -444,14 +451,14 @@
 
 .tx-live-permission-note {
   font-size: 11px;
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
   margin-top: 4px;
 }
 
 /* ─── Tablet+ ─── */
 @media (min-width: 768px) {
   .transcript-view {
-    padding: 10px 16px;
+    padding: 12px 20px;
   }
 
   .transcript-jump {

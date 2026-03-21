@@ -36,7 +36,7 @@
 
 .modal-header h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 600;
   color: var(--ctp-text);
 }
@@ -92,9 +92,9 @@
 
 .modal-label {
   display: block;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ctp-subtext0);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-info);
   margin-bottom: 5px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -118,12 +118,12 @@
 .modal-input:focus,
 .modal-textarea:focus,
 .modal-select:focus {
-  border-color: var(--ctp-blue);
+  border-color: var(--color-primary);
 }
 
 .modal-input::placeholder,
 .modal-textarea::placeholder {
-  color: var(--ctp-overlay0);
+  color: var(--color-muted);
 }
 
 .modal-textarea {
@@ -148,7 +148,7 @@
 }
 
 .modal-checkbox-row input[type="checkbox"] {
-  accent-color: var(--ctp-blue);
+  accent-color: var(--color-primary);
   width: 18px;
   height: 18px;
   cursor: pointer;
@@ -181,8 +181,9 @@
 }
 
 .modal-btn-primary {
-  background: var(--ctp-blue);
+  background: var(--color-primary);
   color: var(--ctp-crust);
+  font-weight: 600;
 }
 
 .modal-btn-primary:hover:not(:disabled) {
@@ -228,6 +229,10 @@
 
   .modal-header {
     padding: 16px 20px;
+  }
+
+  .modal-header h2 {
+    font-size: 18px;
   }
 
   .modal-body {
