@@ -119,7 +119,15 @@
   border-left-style: dashed;
 }
 
-/* ─── Thinking ─── */
+/* ─── Thinking (compact — matches Claude Code behavior) ─── */
+.tx-thinking-compact {
+  color: var(--ctp-surface2);
+  font-style: italic;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+/* ─── Thinking (expandable — kept for reference) ─── */
 .tx-thinking {
   color: var(--ctp-overlay0);
   font-style: italic;

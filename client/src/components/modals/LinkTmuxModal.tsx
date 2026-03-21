@@ -53,6 +53,7 @@ export function LinkTmuxModal({ isOpen, onClose, sessionId }: LinkTmuxModalProps
   }, [isOpen, onClose]);
 
   const handleOverlayClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
     if (e.target === overlayRef.current) onClose();
   }, [onClose]);
 

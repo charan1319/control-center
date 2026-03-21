@@ -110,11 +110,11 @@ function renderEntry({ entry, result }: PairedEntry, index: number) {
       );
 
     case 'thinking':
+      // Compact thinking indicator — Claude Code doesn't show full thinking text
       return (
-        <details key={index} className="tx-entry tx-thinking">
-          <summary>Thinking...</summary>
-          <div className="tx-thinking-content">{safeString(entry.content)}</div>
-        </details>
+        <div key={index} className="tx-entry tx-thinking-compact">
+          Thought for a moment
+        </div>
       );
 
     case 'assistant':
@@ -181,14 +181,26 @@ interface TranscriptViewProps {
   sessionId: string;
   session?: Session;
   queuedMessages?: string[];
+  onClearQueued?: (text: string) => void;
 }
 
-export function TranscriptView({ sessionId, session, queuedMessages }: TranscriptViewProps) {
+export function TranscriptView({ sessionId, session, queuedMessages, onClearQueued }: TranscriptViewProps) {
   const { entries, loading, error, loadOlder, hasMore } = useTranscript(sessionId);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const prevEntriesLenRef = useRef(0);
+
+  // Clear queued messages when they appear in the real transcript
+  useEffect(() => {
+    if (!queuedMessages?.length || !onClearQueued) return;
+    const userEntries = entries.filter(e => e.type === 'user');
+    for (const msg of queuedMessages) {
+      if (userEntries.some(e => e.content.includes(msg.slice(0, 50)))) {
+        onClearQueued(msg);
+      }
+    }
+  }, [entries, queuedMessages, onClearQueued]);
 
   // Track scroll position
   const handleScroll = useCallback(() => {

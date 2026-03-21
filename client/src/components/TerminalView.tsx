@@ -108,14 +108,27 @@ export function TerminalView({ sessionId, tmuxTarget, onWsReady }: TerminalViewP
     if (Date.now() - scrollbackLastFail.current < 5000) return;
     scrollbackFetching.current = true;
     try {
-      // Fetch raw PTY scrollback buffer — for sessions launched from the dashboard,
-      // this has the complete output stream from session start
-      const res = await fetch(`/api/sessions/${sessionId}/scrollback`, {
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!res.ok) { scrollbackLastFail.current = Date.now(); return; }
-      const { data } = await res.json();
-      if (!data) return;
+      // Try PTY scrollback buffer first (complete stream for sessions launched from dashboard)
+      // Fall back to tmux capture for sessions that predate the headless capture
+      let data: string | null = null;
+      const sbRes = await fetch(`/api/sessions/${sessionId}/scrollback`, {
+        signal: AbortSignal.timeout(4000),
+      }).catch(() => null);
+      if (sbRes?.ok) {
+        const json = await sbRes.json();
+        if (json.data && json.data.length > 100) data = json.data;
+      }
+      if (!data) {
+        // Fallback: tmux capture (plain text, less perfect but better than nothing)
+        const capRes = await fetch(`/api/sessions/${sessionId}/terminal-capture`, {
+          signal: AbortSignal.timeout(4000),
+        }).catch(() => null);
+        if (capRes?.ok) {
+          const json = await capRes.json();
+          if (json.text?.trim()) data = json.text.replace(/\n/g, '\r\n');
+        }
+      }
+      if (!data) { scrollbackLastFail.current = Date.now(); return; }
 
       setShowScrollback(true);
 

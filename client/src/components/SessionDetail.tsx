@@ -87,7 +87,12 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
       {/* Content */}
       <div className="sd-content">
         {activeTab === 'transcript' && (
-          <TranscriptView sessionId={session.session_id} session={session} queuedMessages={queuedMessages} />
+          <TranscriptView
+            sessionId={session.session_id}
+            session={session}
+            queuedMessages={queuedMessages}
+            onClearQueued={(text) => setQueuedMessages(prev => prev.filter(m => m !== text))}
+          />
         )}
         {activeTab === 'terminal' && hasTmux && (
           <TerminalView
@@ -106,8 +111,8 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
           terminalWs={terminalWsRef.current}
           onMessageSent={(text) => {
             setQueuedMessages(prev => [...prev, text]);
-            // Clear queued messages after 10s (transcript should have confirmed by then)
-            setTimeout(() => setQueuedMessages(prev => prev.filter(m => m !== text)), 10000);
+            // Clear after 15s max — but TranscriptView clears sooner when it sees the message
+            setTimeout(() => setQueuedMessages(prev => prev.filter(m => m !== text)), 15000);
           }}
         />
       )}

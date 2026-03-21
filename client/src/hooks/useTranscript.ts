@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWebSocket } from './useWebSocket';
 import { api } from '../api';
 import type { TranscriptEntry } from '../types';
@@ -10,24 +10,42 @@ export function useTranscript(sessionId: string | null) {
   const [hasMore, setHasMore] = useState(false);
   const { sendMessage, connectionStatus, transcriptVersion, getTranscriptUpdates } = useWebSocket();
 
+  // Fetch transcript via HTTP — independent of WebSocket status
   useEffect(() => {
     if (!sessionId) {
       setEntries([]);
+      setError(null);
       return;
     }
-    if (connectionStatus !== 'connected') return;
 
-    // Fetch initial transcript
+    // Clear stale state from previous session
+    setEntries([]);
+    setError(null);
     setLoading(true);
+
+    let cancelled = false;
+
     api.getTranscript(sessionId, 100)
       .then(data => {
+        if (cancelled) return;
         setEntries(data.entries);
         setHasMore(data.hasMore);
       })
-      .catch(err => setError(err.message))
-      .finally(() => setLoading(false));
+      .catch(err => {
+        if (cancelled) return;
+        setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
-    // Subscribe to live updates
+    return () => { cancelled = true; };
+  }, [sessionId]);
+
+  // Subscribe to live transcript updates via WebSocket (separate from fetch)
+  useEffect(() => {
+    if (!sessionId || connectionStatus !== 'connected') return;
+
     sendMessage({ type: 'subscribe_transcript', session_id: sessionId });
 
     return () => {

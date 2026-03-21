@@ -49,6 +49,7 @@ export function SnapshotDiffModal({ isOpen, onClose, sessionId }: SnapshotDiffMo
   }, [isOpen, onClose]);
 
   const handleOverlayClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
     if (e.target === overlayRef.current) onClose();
   }, [onClose]);
 
