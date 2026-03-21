@@ -30,6 +30,7 @@ try { db.exec(`ALTER TABLE sessions ADD COLUMN project TEXT`); } catch { /* alre
 try { db.exec(`ALTER TABLE sessions ADD COLUMN auto_approve INTEGER DEFAULT 1`); } catch { /* already exists */ }
 try { db.exec(`ALTER TABLE sessions ADD COLUMN pending_tool TEXT`); } catch { /* already exists */ }
 try { db.exec(`ALTER TABLE sessions ADD COLUMN pending_tool_input TEXT`); } catch { /* already exists */ }
+try { db.exec(`ALTER TABLE sessions ADD COLUMN snapshot_hash TEXT`); } catch { /* already exists */ }
 
 db.exec(`
 
@@ -195,6 +196,10 @@ const stmts = {
      GROUP BY fe.file_path
      HAVING COUNT(DISTINCT fe.session_id) > 1`
   ),
+
+  updateSnapshotHash: db.prepare(
+    'UPDATE sessions SET snapshot_hash = @hash WHERE session_id = @session_id'
+  ),
 };
 
 // ──────────────────────────────────────────────
@@ -270,6 +275,10 @@ export function getFilesBySession(session_id) {
 }
 export function getActiveFileConflicts(project) {
   return stmts.getActiveFileConflicts.all({ project });
+}
+
+export function updateSnapshotHash(session_id, hash) {
+  return stmts.updateSnapshotHash.run({ session_id, hash });
 }
 
 const setPendingStmt = db.prepare(`

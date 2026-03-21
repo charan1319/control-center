@@ -10,6 +10,7 @@ import webpush from 'web-push';
 import config from './config.js';
 import * as db from './db.js';
 import * as ptyManager from './pty-manager.js';
+import * as snapshots from './snapshots.js';
 import { readTranscriptTail, getLastAssistantText, readTranscriptStructured, getTranscriptSize } from './transcript.js';
 
 // Configure web-push VAPID keys (no-op if keys not set)
@@ -652,6 +653,19 @@ export async function buildServer(opts = {}) {
         });
         if (pending) pendingLabels.delete(match.name);
       }
+
+      // Capture initial snapshot (fire and forget — don't block hook response)
+      const snapshotCwd = payload.cwd;
+      const snapshotSid = session_id;
+      setImmediate(() => {
+        try {
+          snapshots.initRepo(snapshotCwd);
+          const hash = snapshots.capture(snapshotCwd);
+          if (hash) db.updateSnapshotHash(snapshotSid, hash);
+        } catch (err) {
+          fastify.log.warn({ err, session_id: snapshotSid }, 'Snapshot capture failed');
+        }
+      });
     }
 
     // 2. Update session status (with auto-approve logic for PermissionRequest)
@@ -1095,6 +1109,35 @@ export async function buildServer(opts = {}) {
   fastify.get('/api/sessions/:id/files', async (request) => {
     const files = db.getFilesBySession(request.params.id);
     return { files };
+  });
+
+  // ──────────────────────────────────────────────
+  // REST: Snapshot diff & revert
+  // ──────────────────────────────────────────────
+
+  fastify.get('/api/sessions/:id/snapshot-diff', async (request, reply) => {
+    const session = db.getSession(request.params.id);
+    if (!session) return reply.status(404).send({ error: 'Session not found' });
+    if (!session.snapshot_hash || !session.cwd) return reply.status(404).send({ error: 'No snapshot available' });
+    try {
+      const changes = snapshots.diff(session.cwd, session.snapshot_hash);
+      return changes;
+    } catch (err) {
+      return reply.status(500).send({ error: `Snapshot diff failed: ${err.message}` });
+    }
+  });
+
+  fastify.post('/api/sessions/:id/revert', async (request, reply) => {
+    const session = db.getSession(request.params.id);
+    if (!session) return reply.status(404).send({ error: 'Session not found' });
+    if (session.status !== 'stopped') return reply.status(400).send({ error: 'Session must be stopped before reverting' });
+    if (!session.snapshot_hash) return reply.status(400).send({ error: 'No snapshot available' });
+    try {
+      const files = snapshots.restore(session.cwd, session.snapshot_hash);
+      return { reverted: true, files };
+    } catch (err) {
+      return reply.status(500).send({ error: `Revert failed: ${err.message}` });
+    }
   });
 
   // ──────────────────────────────────────────────

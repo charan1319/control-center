@@ -277,6 +277,58 @@ describe('GET /api/sessions/:id/transcript', () => {
   });
 });
 
+describe('Snapshot diff & revert', () => {
+  it('GET /api/sessions/:id/snapshot-diff returns 404 for session without snapshot', async () => {
+    // test-1 was created earlier but has no snapshot_hash (snapshots require real git)
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/test-1/snapshot-diff' });
+    assert.equal(res.statusCode, 404);
+    assert.ok(res.json().error.includes('No snapshot'));
+  });
+
+  it('GET /api/sessions/:id/snapshot-diff returns 404 for nonexistent session', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/nonexistent/snapshot-diff' });
+    assert.equal(res.statusCode, 404);
+    assert.equal(res.json().error, 'Session not found');
+  });
+
+  it('POST /api/sessions/:id/revert returns 400 for active session', async () => {
+    // test-1 is active (from earlier tests), so revert should fail
+    const sessionRes = await app.inject({ method: 'GET', url: '/api/sessions/test-1' });
+    // Ensure it's not stopped
+    assert.notEqual(sessionRes.json().status, 'stopped');
+
+    const res = await app.inject({ method: 'POST', url: '/api/sessions/test-1/revert' });
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.json().error, 'Session must be stopped before reverting');
+  });
+
+  it('POST /api/sessions/:id/revert returns 400 for session without snapshot', async () => {
+    // Create a stopped session without a snapshot
+    await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'SessionStart',
+        session_id: 'revert-test-1',
+        cwd: '/tmp/revert-proj',
+        tmux_session: 'cc-revert-test',
+      },
+    });
+    // Kill it to make it stopped
+    await app.inject({ method: 'POST', url: '/api/sessions/revert-test-1/kill' });
+
+    const res = await app.inject({ method: 'POST', url: '/api/sessions/revert-test-1/revert' });
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.json().error, 'No snapshot available');
+  });
+
+  it('POST /api/sessions/:id/revert returns 404 for nonexistent session', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/sessions/nonexistent/revert' });
+    assert.equal(res.statusCode, 404);
+    assert.equal(res.json().error, 'Session not found');
+  });
+});
+
 describe('File edit tracking', () => {
   const FILE_SESSION = 'file-edit-test-1';
   const FILE_SESSION_2 = 'file-edit-test-2';
