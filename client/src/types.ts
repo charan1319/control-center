@@ -57,6 +57,7 @@ export interface TranscriptEntry {
   tool_result?: string;
   is_error?: boolean;
   timestamp?: string;
+  stop_reason?: string;
 }
 
 export interface Todo {

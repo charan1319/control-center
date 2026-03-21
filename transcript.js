@@ -125,11 +125,12 @@ export function readTranscriptStructured(filePath, maxBytes = 65536) {
         } else if (obj.type === 'assistant') {
           const content = obj.message?.content;
           if (!Array.isArray(content)) continue;
+          const stopReason = obj.message?.stop_reason || undefined;
           for (const block of content) {
             if (block.type === 'thinking') {
-              entries.push({ type: 'thinking', content: block.thinking || '', timestamp });
+              entries.push({ type: 'thinking', content: block.thinking || '', timestamp, stop_reason: stopReason });
             } else if (block.type === 'text') {
-              entries.push({ type: 'assistant', content: block.text || '', timestamp });
+              entries.push({ type: 'assistant', content: block.text || '', timestamp, stop_reason: stopReason });
             } else if (block.type === 'tool_use') {
               entries.push({
                 type: 'tool_use',
@@ -138,6 +139,7 @@ export function readTranscriptStructured(filePath, maxBytes = 65536) {
                 tool_input_summary: summarizeToolInput(block.name, block.input),
                 tool_input_full: typeof block.input === 'string' ? block.input : JSON.stringify(block.input, null, 2),
                 timestamp,
+                stop_reason: stopReason,
               });
             }
           }
