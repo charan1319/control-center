@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../../api';
 import { useToast } from '../Toast';
 import type { Session, ProjectPreset } from '../../types';
@@ -71,7 +72,7 @@ export function EditSessionModal({ isOpen, onClose, session }: EditSessionModalP
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <div className="modal-overlay" ref={overlayRef} onClick={handleOverlayClick}>
       <div className="modal-card">
         <div className="modal-header">
@@ -123,6 +124,7 @@ export function EditSessionModal({ isOpen, onClose, session }: EditSessionModalP
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

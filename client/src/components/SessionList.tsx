@@ -12,7 +12,7 @@ interface SessionListProps {
 }
 
 export function SessionList({ selectedSessionId, onSelectSession, serverInfo }: SessionListProps) {
-  const { sessions, recentEvents, byProject, stoppedSessions } = useSessions();
+  const { sessions, recentEvents, byProject, pendingSessions, stoppedSessions } = useSessions();
 
   // 15s tick for age refresh
   const [, setTick] = useState(0);
@@ -42,6 +42,26 @@ export function SessionList({ selectedSessionId, onSelectSession, serverInfo }: 
   return (
     <div className="session-list">
       <div className="sessions-grid">
+        {pendingSessions.length > 0 && (
+          <div className="pending-section">
+            <div className="pending-heading">
+              Pending Permission ({pendingSessions.length})
+            </div>
+            <div className="project-sessions pending-sessions">
+              {pendingSessions.map(s => (
+                <SessionCard
+                  key={`pending-${s.session_id}`}
+                  session={s}
+                  isSelected={s.session_id === selectedSessionId}
+                  serverInfo={serverInfo}
+                  onSelect={() => onSelectSession(s.session_id)}
+                  recentEvents={recentEvents}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {hasActive ? (
           Array.from(byProject.entries()).map(([project, projectSessions]) => (
             <ProjectGroup

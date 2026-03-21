@@ -63,6 +63,25 @@
   color: var(--color-info);
 }
 
+/* Pending permission section */
+.pending-section {
+  margin-bottom: 4px;
+}
+
+.pending-heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-warning);
+  padding: 2px 6px;
+  border-left: 3px solid var(--color-warning);
+}
+
+.pending-sessions {
+  margin-top: 8px;
+}
+
 /* Stopped section */
 .stopped-section {
   margin-top: 8px;

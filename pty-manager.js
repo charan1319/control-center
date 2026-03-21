@@ -289,25 +289,39 @@ export function createTmuxSession({ label, cwd, initialPrompt, skipPermissions =
   execFileSync('tmux', ['send-keys', '-t', sessionName, cliCmd, 'Enter'], { timeout: TMUX_TIMEOUT_MS });
 
   // If there's an initial prompt, wait for Claude Code TUI to initialize then send it.
-  // Uses load-buffer + paste-buffer to paste the entire prompt as a block — reliable
-  // for any length, unlike send-keys which types one character at a time and can
-  // timeout or drop characters on longer prompts.
+  // Uses sendPrompt which paste-buffers the text then sends Enter after a delay.
   if (initialPrompt) {
-    setTimeout(() => {
-      try {
-        const buf = `cc-init-${Date.now()}`;
-        execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: initialPrompt, timeout: TMUX_TIMEOUT_MS });
-        execFileSync('tmux', ['paste-buffer', '-t', sessionName, '-b', buf, '-d'], { timeout: TMUX_TIMEOUT_MS });
-        // Bracketed paste mode (used by Claude Code TUI) treats pasted newlines as text,
-        // not keypresses — send Enter explicitly to submit the prompt
-        execFileSync('tmux', ['send-keys', '-t', sessionName, 'Enter'], { timeout: TMUX_TIMEOUT_MS });
-      } catch (err) {
-        console.error(`[pty-manager] Failed to send initial prompt to ${sessionName}: ${err.message}`);
-      }
-    }, 5000);
+    // 8s delay: Claude Code TUI typically needs 5-8s to initialize after launch.
+    // sendPrompt adds its own internal delays for paste processing + Enter.
+    setTimeout(() => sendPrompt(sessionName, initialPrompt), 8000);
   }
 
   return sessionName;
+}
+
+/**
+ * Send a prompt to a tmux pane via paste-buffer, then submit with Enter.
+ * Called from the SessionStart hook handler so Claude is guaranteed to be running.
+ * Uses a short delay between paste and Enter to let the TUI process the paste.
+ */
+export function sendPrompt(tmuxTarget, text) {
+  sanitizeTmuxTarget(tmuxTarget);
+  setTimeout(() => {
+    try {
+      const buf = `cc-init-${Date.now()}`;
+      execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: text, timeout: TMUX_TIMEOUT_MS });
+      execFileSync('tmux', ['paste-buffer', '-t', tmuxTarget, '-b', buf, '-d'], { timeout: TMUX_TIMEOUT_MS });
+      setTimeout(() => {
+        try {
+          execFileSync('tmux', ['send-keys', '-t', tmuxTarget, 'Enter'], { timeout: TMUX_TIMEOUT_MS });
+        } catch (err) {
+          console.error(`[pty-manager] Failed to submit prompt to ${tmuxTarget}: ${err.message}`);
+        }
+      }, 1500);
+    } catch (err) {
+      console.error(`[pty-manager] Failed to send prompt to ${tmuxTarget}: ${err.message}`);
+    }
+  }, 2000);
 }
 
 /**

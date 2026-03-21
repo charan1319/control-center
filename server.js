@@ -933,15 +933,13 @@ export async function buildServer(opts = {}) {
       setTimeout(() => ptyManager.startCapture(tmuxTarget), 1000);
 
       // Store label/project/autoApprove so the SessionStart hook handler can apply them when auto-linking
-      if (label || project || autoApprove !== undefined) {
-        const autoApproveDbVal = autoApprove === 'none' ? 0 : autoApprove === 'readonly' ? 2 : 1;
-        pendingLabels.set(tmuxTarget, {
-          label,
-          project: project || undefined,
-          autoApproveDbVal,
-          createdAt: Date.now(),
-        });
-      }
+      const autoApproveDbVal = autoApprove === 'none' ? 0 : autoApprove === 'readonly' ? 2 : 1;
+      pendingLabels.set(tmuxTarget, {
+        label,
+        project: project || undefined,
+        autoApproveDbVal,
+        createdAt: Date.now(),
+      });
       return { success: true, tmux_target: tmuxTarget, label };
     } catch (err) {
       return reply.status(500).send({ error: `Failed to create session: ${err.message}` });

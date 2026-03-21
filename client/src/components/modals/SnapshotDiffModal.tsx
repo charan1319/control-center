@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../../api';
 import { useToast } from '../Toast';
 import './ModalBase.css';
@@ -71,7 +72,7 @@ export function SnapshotDiffModal({ isOpen, onClose, sessionId }: SnapshotDiffMo
   const totalChanges = diff ? diff.added.length + diff.modified.length + diff.deleted.length : 0;
   const noChanges = diff && totalChanges === 0;
 
-  return (
+  return createPortal(
     <div className="modal-overlay snapshot-diff-modal" ref={overlayRef} onClick={handleOverlayClick}>
       <div className="modal-card">
         <div className="modal-header">
@@ -168,6 +169,7 @@ export function SnapshotDiffModal({ isOpen, onClose, sessionId }: SnapshotDiffMo
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

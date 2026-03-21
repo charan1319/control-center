@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../../api';
 import { useToast } from '../Toast';
 import './ModalBase.css';
@@ -72,7 +73,7 @@ export function LinkTmuxModal({ isOpen, onClose, sessionId }: LinkTmuxModalProps
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <div className="modal-overlay" ref={overlayRef} onClick={handleOverlayClick}>
       <div className="modal-card">
         <div className="modal-header">
@@ -109,6 +110,7 @@ export function LinkTmuxModal({ isOpen, onClose, sessionId }: LinkTmuxModalProps
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

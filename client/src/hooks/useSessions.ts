@@ -9,6 +9,12 @@ export function useSessions() {
   const waitingCount = useMemo(() => sessions.filter(s => getStatusClass(s) === 'waiting').length, [sessions]);
   const idleCount = useMemo(() => sessions.filter(s => getStatusClass(s) === 'idle').length, [sessions]);
   const byProject = useMemo(() => groupByProject(sessions), [sessions]);
+  const pendingSessions = useMemo(
+    () => sessions
+      .filter(s => s.status === 'waiting_permission')
+      .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || '')),
+    [sessions]
+  );
   const stoppedSessions = useMemo(
     () => sessions
       .filter(s => s.status === 'stopped')
@@ -16,5 +22,5 @@ export function useSessions() {
     [sessions]
   );
 
-  return { sessions, recentEvents, activeCount, waitingCount, idleCount, byProject, stoppedSessions };
+  return { sessions, recentEvents, activeCount, waitingCount, idleCount, byProject, pendingSessions, stoppedSessions };
 }
