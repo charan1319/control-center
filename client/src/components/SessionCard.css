@@ -94,6 +94,30 @@
   flex-shrink: 0;
 }
 
+/* CLI type badge */
+.cli-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ctp-base);
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+.cli-badge-gemini { background: var(--ctp-green); }
+.cli-badge-codex { background: var(--ctp-peach); }
+
+/* Codex approval note */
+.codex-approval-note {
+  font-size: 11px;
+  color: var(--ctp-overlay0);
+  font-style: italic;
+}
+
 /* Meta row */
 .session-card .card-meta-row {
   display: flex;

@@ -264,6 +264,8 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
                 onChange={e => setCliType(e.target.value)}
               >
                 <option value="claude">Claude Code</option>
+                <option value="gemini">Gemini CLI</option>
+                <option value="codex">Codex CLI</option>
               </select>
             </div>
           </div>

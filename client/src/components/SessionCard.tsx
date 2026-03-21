@@ -125,6 +125,12 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
       <div className="card-header">
         <span className={`indicator ${statusClass}`} />
         <span className="card-label" title={label}>{escapeHtml(label)}</span>
+        {session.cli_type === 'gemini' && (
+          <span className="cli-badge cli-badge-gemini" title="Gemini CLI">G</span>
+        )}
+        {session.cli_type === 'codex' && (
+          <span className="cli-badge cli-badge-codex" title="Codex CLI">X</span>
+        )}
         {age && <span className="card-age">{age}</span>}
       </div>
 
@@ -165,10 +171,15 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
       ) : null}
 
       <div className="card-actions">
-        {statusClass === 'waiting' && session.tmux_target && (
+        {statusClass === 'waiting' && session.tmux_target && session.cli_type !== 'codex' && (
           <button className="btn-grant" onClick={handleGrant}>
             Grant
           </button>
+        )}
+        {statusClass === 'waiting' && session.cli_type === 'codex' && (
+          <span className="codex-approval-note" title="Codex approval policy is set at launch">
+            Codex approval policy is set at launch
+          </span>
         )}
         {session.tmux_target ? (
           <button className="btn-terminal" onClick={handleTerminal}>
