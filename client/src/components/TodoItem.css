@@ -13,10 +13,6 @@
   border-left-color: var(--color-primary);
 }
 
-.todo-item.status-done {
-  border-left-color: var(--color-success);
-}
-
 .todo-item[draggable="true"] {
   cursor: grab;
 }
@@ -55,10 +51,6 @@
   animation: todoPulse 1.5s infinite;
 }
 
-.todo-status-dot.done {
-  background: var(--color-success);
-}
-
 @keyframes todoPulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--color-primary); }
   50% { opacity: 0.6; box-shadow: 0 0 4px 1px var(--color-primary); }
@@ -75,11 +67,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   padding: 2px 0;
-}
-
-.todo-item.status-done .todo-title {
-  color: var(--ctp-overlay1);
-  text-decoration: line-through;
 }
 
 /* Action buttons */

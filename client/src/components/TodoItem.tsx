@@ -17,6 +17,7 @@ export function TodoItem({ todo, onRefresh, sessionStopped }: TodoItemProps) {
   const [showLaunchPopover, setShowLaunchPopover] = useState(false);
   const [skipPermissions, setSkipPermissions] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showDoneConfirm, setShowDoneConfirm] = useState(false);
   const [stoppedDismissed, setStoppedDismissed] = useState(false);
   const [busy, setBusy] = useState(false);
   const detailsRef = useRef<HTMLTextAreaElement>(null);
@@ -48,10 +49,10 @@ export function TodoItem({ todo, onRefresh, sessionStopped }: TodoItemProps) {
   const handleMarkDone = useCallback(async () => {
     setBusy(true);
     try {
-      await api.updateTodo(todo.id, { status: 'done' });
+      await api.deleteTodo(todo.id);
       onRefresh();
     } catch {
-      showToast('Failed to update', 'error');
+      showToast('Failed to delete', 'error');
     } finally {
       setBusy(false);
     }
@@ -107,13 +108,23 @@ export function TodoItem({ todo, onRefresh, sessionStopped }: TodoItemProps) {
             </button>
           )}
           {todo.status === 'in_progress' && (
-            <button
-              className="btn-todo-done"
-              onClick={handleMarkDone}
-              disabled={busy}
-            >
-              Done
-            </button>
+            !showDoneConfirm ? (
+              <button
+                className="btn-todo-done"
+                onClick={() => setShowDoneConfirm(true)}
+                disabled={busy}
+              >
+                Done
+              </button>
+            ) : (
+              <button
+                className="btn-todo-done"
+                onClick={handleMarkDone}
+                disabled={busy}
+              >
+                Confirm?
+              </button>
+            )
           )}
           {!showDeleteConfirm ? (
             <button
