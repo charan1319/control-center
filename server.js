@@ -505,13 +505,32 @@ export async function buildServer(opts = {}) {
 
       if (obj.type === 'user') {
         const content = obj.message?.content;
-        let text = '';
-        if (typeof content === 'string') {
-          text = content;
-        } else if (Array.isArray(content)) {
-          text = content.filter(b => b.type === 'text').map(b => b.text || '').join('\n');
+        if (Array.isArray(content)) {
+          const textParts = [];
+          for (const block of content) {
+            if (block.type === 'tool_result') {
+              const rawContent = block.content;
+              let text = '';
+              if (typeof rawContent === 'string') {
+                text = rawContent;
+              } else if (Array.isArray(rawContent)) {
+                text = rawContent.map(x => x.text || '').join(' ');
+              }
+              entries.push({
+                type: 'tool_result',
+                content: text.slice(0, 500),
+                is_error: block.is_error || false,
+                timestamp,
+              });
+            } else if (block.type === 'text') {
+              textParts.push(block.text || '');
+            }
+          }
+          const userText = textParts.join('\n');
+          if (userText) entries.push({ type: 'user', content: userText, timestamp });
+        } else if (typeof content === 'string') {
+          if (content) entries.push({ type: 'user', content, timestamp });
         }
-        if (text) entries.push({ type: 'user', content: text, timestamp });
 
       } else if (obj.type === 'assistant') {
         const content = obj.message?.content;
@@ -528,13 +547,14 @@ export async function buildServer(opts = {}) {
               content: summary,
               tool_name: block.name || '',
               tool_input_summary: summary,
-              tool_input_full: block.input,
+              tool_input_full: typeof block.input === 'string' ? block.input : JSON.stringify(block.input, null, 2),
               timestamp,
             });
           }
         }
 
       } else if (obj.type === 'tool_result') {
+        // Legacy format: top-level tool_result entries
         const rawContent = obj.content;
         let text = '';
         if (typeof rawContent === 'string') {
@@ -730,9 +750,8 @@ export async function buildServer(opts = {}) {
           const tmuxTarget = sess.tmux_target;
           setTimeout(() => {
             try {
-              const buf = `cc-ap-${Date.now()}`;
-              execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: '1\n', timeout: 5_000 });
-              execFileSync('tmux', ['paste-buffer', '-t', tmuxTarget, '-b', buf, '-d'], { timeout: 5_000 });
+              // Permission prompt defaults to "Yes" — just press Enter to confirm
+              execFileSync('tmux', ['send-keys', '-t', tmuxTarget, 'Enter'], { timeout: 5_000 });
             } catch { /* tmux paste failed */ }
           }, 800);
         }
@@ -909,6 +928,10 @@ export async function buildServer(opts = {}) {
         skipPermissions: !!skipPermissions,
         cli_type: cli_type || 'claude',
       });
+
+      // Start headless PTY capture immediately so scrollback is captured from session start
+      setTimeout(() => ptyManager.startCapture(tmuxTarget), 1000);
+
       // Store label/project/autoApprove so the SessionStart hook handler can apply them when auto-linking
       if (label || project || autoApprove !== undefined) {
         const autoApproveDbVal = autoApprove === 'none' ? 0 : autoApprove === 'readonly' ? 2 : 1;
@@ -949,8 +972,9 @@ export async function buildServer(opts = {}) {
       // Use a unique named buffer to avoid race conditions between concurrent requests.
       // execFileSync bypasses the shell entirely — no injection possible.
       const buf = `cc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: text + '\n', timeout: 10_000 });
+      execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: text, timeout: 10_000 });
       execFileSync('tmux', ['paste-buffer', '-t', target, '-b', buf, '-d'], { timeout: 10_000 });
+      execFileSync('tmux', ['send-keys', '-t', target, 'Enter'], { timeout: 10_000 });
       return { success: true };
     } catch (err) {
       return reply.status(500).send({ error: err.message });
@@ -1001,9 +1025,8 @@ export async function buildServer(opts = {}) {
     // so we must send the keystroke directly.
     if (session.tmux_target && /^[a-zA-Z0-9_-]+$/.test(session.tmux_target)) {
       try {
-        const buf = `cc-gp-${Date.now()}`;
-        execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: '1\n', timeout: 5_000 });
-        execFileSync('tmux', ['paste-buffer', '-t', session.tmux_target, '-b', buf, '-d'], { timeout: 5_000 });
+        // Permission prompt defaults to "Yes" — just press Enter to confirm
+        execFileSync('tmux', ['send-keys', '-t', session.tmux_target, 'Enter'], { timeout: 5_000 });
       } catch { /* tmux paste failed — long-poll resolution still clears waiting state */ }
     }
 
@@ -1055,6 +1078,17 @@ export async function buildServer(opts = {}) {
   // REST: tmux scrollback capture (for history view)
   // ──────────────────────────────────────────────
 
+  fastify.get('/api/sessions/:id/scrollback', async (request, reply) => {
+    const session = db.getSession(request.params.id);
+    if (!session) return reply.status(404).send({ error: 'Session not found' });
+    if (!session.tmux_target) return reply.status(400).send({ error: 'No tmux target linked' });
+    // Return cleaned PTY output — strips alternate screen, cursor positioning, and
+    // screen clear sequences so the scrollback renders correctly in a read-only xterm.js.
+    const data = ptyManager.getCleanScrollback(session.tmux_target);
+    if (data === null) return reply.status(404).send({ error: 'No active PTY bridge' });
+    return { data };
+  });
+
   fastify.get('/api/sessions/:id/terminal-capture', async (request, reply) => {
     const session = db.getSession(request.params.id);
     if (!session) return reply.status(404).send({ error: 'Session not found' });
@@ -1065,10 +1099,12 @@ export async function buildServer(opts = {}) {
     }
     try {
       // -p: print to stdout  -S -10000: go 10000 lines into scrollback history
-      // Without -e: strips ANSI escape sequences → clean plain text
-      const text = execFileSync('tmux', [
-        'capture-pane', '-p', '-S', '-10000', '-t', session.tmux_target,
-      ], { encoding: 'utf-8', timeout: 10_000 });
+      // -e: preserve ANSI escape sequences (colors) when ?ansi=1 query param
+      const useAnsi = request.query.ansi === '1';
+      const args = useAnsi
+        ? ['capture-pane', '-p', '-e', '-S', '-10000', '-t', session.tmux_target]
+        : ['capture-pane', '-p', '-S', '-10000', '-t', session.tmux_target];
+      const text = execFileSync('tmux', args, { encoding: 'utf-8', timeout: 10_000 });
       return { text };
     } catch (err) {
       return reply.status(500).send({ error: `tmux capture failed: ${err.message}` });
@@ -1422,6 +1458,13 @@ Begin by reading CLAUDE.md and the relevant source files, then present your impl
         initialPrompt,
         skipPermissions: !!skipPermissions,
       });
+
+      // Start headless PTY capture immediately
+      setTimeout(() => ptyManager.startCapture(tmuxTarget), 1000);
+
+      // Mark todo as in_progress immediately so the UI updates right away
+      // (linkTodoSession will re-set this when SessionStart arrives — idempotent)
+      db.updateTodo(todo.id, { status: 'in_progress' });
 
       pendingLabels.set(tmuxTarget, {
         label: todo.title,

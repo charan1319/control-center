@@ -37,69 +37,86 @@ function tmuxSessionExists(target) {
 }
 
 /**
+ * Ensure a PTY bridge exists for a tmux target. Creates one if needed.
+ * Returns the entry, or null if the tmux session doesn't exist.
+ */
+function ensureBridge(tmuxTarget) {
+  let entry = activePTYs.get(tmuxTarget);
+  if (entry) return entry;
+
+  if (!tmuxSessionExists(tmuxTarget)) return null;
+
+  let ptyProcess;
+  try {
+    // -2 forces tmux to assume 256-color support, bypassing its default-terminal setting.
+    // Without this, tmux may use 'screen' which strips/remaps colors from Claude Code.
+    ptyProcess = pty.spawn('/bin/bash', [
+      '-c', `TERM=xterm-256color exec tmux -2 attach-session -t ${tmuxTarget}`
+    ], {
+      name: 'xterm-256color',
+      cols: 120,
+      rows: 40,
+      env: { ...process.env, TERM: 'xterm-256color' },
+    });
+  } catch (err) {
+    console.error(`[pty-manager] Failed to spawn PTY for ${tmuxTarget}: ${err.message}`);
+    return null;
+  }
+
+  entry = {
+    ptyProcess,
+    clients: new Set(),
+    graceTimer: null,
+    headless: false, // true = auto-started capture, don't kill on client disconnect
+    scrollback: '',
+  };
+
+  ptyProcess.onData((data) => {
+    entry.scrollback = (entry.scrollback + data).slice(-config.scrollbackBufferSize);
+    const msg = JSON.stringify({ type: 'output', data });
+    for (const client of entry.clients) {
+      try {
+        if (client.readyState === 1) client.send(msg);
+      } catch { /* client gone */ }
+    }
+  });
+
+  ptyProcess.onExit(({ exitCode }) => {
+    if (entry.graceTimer) clearTimeout(entry.graceTimer);
+    activePTYs.delete(tmuxTarget);
+    const exitMsg = JSON.stringify({ type: 'exit', code: exitCode });
+    for (const client of entry.clients) {
+      try {
+        client.send(exitMsg);
+        client.close();
+      } catch { /* ignore */ }
+    }
+  });
+
+  activePTYs.set(tmuxTarget, entry);
+  return entry;
+}
+
+/**
+ * Start headless PTY capture for a tmux session.
+ * Begins buffering all output immediately — no WebSocket client needed.
+ * Call this when a session is launched so scrollback is captured from the start.
+ */
+export function startCapture(tmuxTarget) {
+  const entry = ensureBridge(tmuxTarget);
+  if (entry) entry.headless = true;
+  return !!entry;
+}
+
+/**
  * Attach a WebSocket client to a tmux session's PTY.
  * Creates the PTY bridge if it doesn't exist yet.
  * Multiple clients can attach to the same PTY simultaneously.
  * Returns the pty process, or null if the tmux session doesn't exist.
  */
 export function attach(tmuxTarget, socket) {
-  if (!tmuxSessionExists(tmuxTarget)) {
-    return null;
-  }
-
-  let entry = activePTYs.get(tmuxTarget);
-
-  if (!entry) {
-    // Spawn a new PTY bridged to the tmux session.
-    // Target is already validated by tmuxSessionExists → sanitizeTmuxTarget above.
-    let ptyProcess;
-    try {
-      ptyProcess = pty.spawn('/bin/bash', [
-        '-c', `exec tmux attach-session -t ${tmuxTarget}`
-      ], {
-        name: 'xterm-256color',
-        cols: 120,
-        rows: 40,
-        env: { ...process.env, TERM: 'xterm-256color' },
-      });
-    } catch (err) {
-      console.error(`[pty-manager] Failed to spawn PTY for ${tmuxTarget}: ${err.message}`);
-      return null;
-    }
-
-    entry = {
-      ptyProcess,
-      clients: new Set(),
-      graceTimer: null,
-      scrollback: '',
-    };
-
-    // Pipe PTY output → all connected WebSocket clients + scrollback buffer.
-    // Concat + slice in one step avoids the buffer temporarily overshooting its limit.
-    ptyProcess.onData((data) => {
-      entry.scrollback = (entry.scrollback + data).slice(-config.scrollbackBufferSize);
-      const msg = JSON.stringify({ type: 'output', data });
-      for (const client of entry.clients) {
-        try {
-          if (client.readyState === 1) client.send(msg);
-        } catch { /* client gone */ }
-      }
-    });
-
-    ptyProcess.onExit(({ exitCode }) => {
-      if (entry.graceTimer) clearTimeout(entry.graceTimer);
-      activePTYs.delete(tmuxTarget);
-      const exitMsg = JSON.stringify({ type: 'exit', code: exitCode });
-      for (const client of entry.clients) {
-        try {
-          client.send(exitMsg);
-          client.close();
-        } catch { /* ignore */ }
-      }
-    });
-
-    activePTYs.set(tmuxTarget, entry);
-  }
+  const entry = ensureBridge(tmuxTarget);
+  if (!entry) return null;
 
   // Clear grace timer if set (a new client connected before grace period expired)
   if (entry.graceTimer) {
@@ -130,12 +147,14 @@ export function detach(tmuxTarget, socket) {
 
   entry.clients.delete(socket);
 
-  if (entry.clients.size === 0) {
+  if (entry.clients.size === 0 && !entry.headless) {
+    // No clients and not a headless capture — start grace timer
     entry.graceTimer = setTimeout(() => {
       try { entry.ptyProcess.kill(); } catch { /* already dead */ }
       activePTYs.delete(tmuxTarget);
     }, config.ptyGracePeriodMs);
   }
+  // Headless bridges persist with zero clients — they keep capturing output
 }
 
 /**
@@ -146,6 +165,67 @@ export function resize(tmuxTarget, cols, rows) {
   if (entry) {
     entry.ptyProcess.resize(cols, rows);
   }
+}
+
+/**
+ * Get the raw PTY scrollback buffer for a tmux target.
+ * Returns the actual terminal output stream (with ANSI codes), or null if no PTY bridge exists.
+ */
+export function getScrollback(tmuxTarget) {
+  const entry = activePTYs.get(tmuxTarget);
+  return entry ? entry.scrollback : null;
+}
+
+/**
+ * Get a cleaned version of the scrollback suitable for replay into a read-only xterm.js.
+ * Strips alternate screen, cursor positioning, and screen clear sequences
+ * while preserving text content and color/style codes.
+ */
+export function getCleanScrollback(tmuxTarget) {
+  const entry = activePTYs.get(tmuxTarget);
+  if (!entry || !entry.scrollback) return null;
+
+  let data = entry.scrollback;
+
+  // Strip alternate screen enter/exit
+  data = data.replace(/\x1b\[\?1049[hl]/g, '');
+  data = data.replace(/\x1b\[\?47[hl]/g, '');
+  data = data.replace(/\x1b\[\?1047[hl]/g, '');
+
+  // Strip screen clears
+  data = data.replace(/\x1b\[2J/g, '');
+  data = data.replace(/\x1b\[3J/g, '');
+
+  // Strip cursor positioning (ESC[H, ESC[row;colH, ESC[row;colf)
+  data = data.replace(/\x1b\[\d*;\d*[Hf]/g, '');
+  data = data.replace(/\x1b\[H/g, '');
+
+  // Strip cursor show/hide
+  data = data.replace(/\x1b\[\?25[hl]/g, '');
+
+  // Strip erase in display (clear from cursor)
+  data = data.replace(/\x1b\[[012]?J/g, '');
+
+  // Strip erase in line
+  data = data.replace(/\x1b\[[012]?K/g, '');
+
+  // Strip cursor save/restore
+  data = data.replace(/\x1b\[s/g, '');
+  data = data.replace(/\x1b\[u/g, '');
+  data = data.replace(/\x1b7/g, '');
+  data = data.replace(/\x1b8/g, '');
+
+  // Strip scroll region
+  data = data.replace(/\x1b\[\d*;\d*r/g, '');
+
+  // Strip window title sequences
+  data = data.replace(/\x1b\][^\x07]*\x07/g, '');
+  data = data.replace(/\x1b\][^\x1b]*\x1b\\/g, '');
+
+  // Collapse runs of blank lines (>3 consecutive) into 2
+  data = data.replace(/(\r?\n){4,}/g, '\n\n\n');
+
+  return data;
 }
 
 /**
@@ -209,13 +289,17 @@ export function createTmuxSession({ label, cwd, initialPrompt, skipPermissions =
   execFileSync('tmux', ['send-keys', '-t', sessionName, cliCmd, 'Enter'], { timeout: TMUX_TIMEOUT_MS });
 
   // If there's an initial prompt, wait for Claude Code TUI to initialize then send it.
-  // Uses tmux send-keys -l (literal) to avoid shell metacharacter interpretation.
+  // Uses load-buffer + paste-buffer to paste the entire prompt as a block — reliable
+  // for any length, unlike send-keys which types one character at a time and can
+  // timeout or drop characters on longer prompts.
   if (initialPrompt) {
     setTimeout(() => {
       try {
-        // Use execFileSync to bypass shell — avoids injection via $(), backticks, etc.
-        // -l flag sends keys literally (no special tmux key interpretation)
-        execFileSync('tmux', ['send-keys', '-t', sessionName, '-l', initialPrompt], { timeout: TMUX_TIMEOUT_MS });
+        const buf = `cc-init-${Date.now()}`;
+        execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: initialPrompt, timeout: TMUX_TIMEOUT_MS });
+        execFileSync('tmux', ['paste-buffer', '-t', sessionName, '-b', buf, '-d'], { timeout: TMUX_TIMEOUT_MS });
+        // Bracketed paste mode (used by Claude Code TUI) treats pasted newlines as text,
+        // not keypresses — send Enter explicitly to submit the prompt
         execFileSync('tmux', ['send-keys', '-t', sessionName, 'Enter'], { timeout: TMUX_TIMEOUT_MS });
       } catch (err) {
         console.error(`[pty-manager] Failed to send initial prompt to ${sessionName}: ${err.message}`);

@@ -13,8 +13,8 @@ const config = {
   dbPath: process.env.CC_DB_PATH || './data/control-center.sqlite',
 
   // PTY
-  ptyGracePeriodMs: 30_000,      // Keep PTY alive 30s after last client disconnects
-  scrollbackBufferSize: 300_000, // Characters of scrollback to replay on connect (history + live)
+  ptyGracePeriodMs: 86_400_000,  // Keep PTY alive 24h after last client disconnects
+  scrollbackBufferSize: 1_000_000, // ~1MB of scrollback to replay on connect
 
   // tmux
   tmuxSessionPrefix: 'cc-',

@@ -17,6 +17,14 @@
   border-left-color: var(--ctp-green);
 }
 
+.todo-item[draggable="true"] {
+  cursor: grab;
+}
+
+.todo-item[draggable="true"]:active {
+  cursor: grabbing;
+}
+
 .todo-item.status-pending {
   border-left-color: var(--ctp-overlay0);
 }

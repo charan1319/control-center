@@ -1,15 +1,18 @@
-/* ─── TranscriptView: Mobile-first ─── */
+/* ─── TranscriptView: Chat-style ─── */
 
 .transcript-view {
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 10px 10px;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   position: relative;
   scroll-behavior: auto;
+  background: var(--ctp-base);
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 /* ─── Loading skeleton ─── */
@@ -85,24 +88,35 @@
 
 /* ─── Entry shared ─── */
 .tx-entry {
-  font-size: 13px;
-  line-height: 1.55;
   word-break: break-word;
 }
 
 /* ─── User ─── */
 .tx-user {
-  color: var(--ctp-blue);
-  border-left: 2px solid var(--ctp-blue);
-  padding: 6px 10px;
-  background: color-mix(in srgb, var(--ctp-blue) 5%, transparent);
-  border-radius: 0 6px 6px 0;
+  color: var(--ctp-text);
+  padding: 10px 12px;
+  margin-top: 16px;
+  background: color-mix(in srgb, var(--ctp-mauve) 5%, transparent);
+  border-left: 3px solid var(--ctp-mauve);
+  border-radius: 0 8px 8px 0;
   white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.tx-user:first-child {
+  margin-top: 0;
 }
 
 .tx-user-prefix {
   font-weight: 700;
-  margin-right: 6px;
+  color: var(--ctp-mauve);
+  margin-right: 8px;
+}
+
+/* Queued/pending user message — shown immediately on send before transcript confirms */
+.tx-user.tx-queued {
+  opacity: 0.6;
+  border-left-style: dashed;
 }
 
 /* ─── Thinking ─── */
@@ -110,17 +124,17 @@
   color: var(--ctp-overlay0);
   font-style: italic;
   font-size: 12px;
-  border-radius: 6px;
 }
 
 .tx-thinking > summary {
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 2px 0;
   list-style: none;
   user-select: none;
   min-height: 44px;
   display: flex;
   align-items: center;
+  color: var(--ctp-surface2);
 }
 
 .tx-thinking > summary::-webkit-details-marker {
@@ -131,7 +145,7 @@
   content: "\25b6";
   display: inline-block;
   margin-right: 6px;
-  font-size: 10px;
+  font-size: 9px;
   transition: transform 0.15s;
 }
 
@@ -140,40 +154,40 @@
 }
 
 .tx-thinking-content {
-  padding: 6px 10px;
+  padding: 2px 0 2px 16px;
   white-space: pre-wrap;
-  color: var(--ctp-overlay1);
+  color: var(--ctp-overlay0);
 }
 
 /* ─── Assistant ─── */
 .tx-assistant {
   color: var(--ctp-text);
-  padding: 6px 10px;
+  padding: 4px 0;
   white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 
 .tx-assistant pre {
-  margin: 6px 0;
-  padding: 8px 10px;
+  margin: 8px 0;
+  padding: 10px 12px;
   background: var(--ctp-mantle);
-  border: 1px solid var(--ctp-surface1);
+  border: 1px solid var(--ctp-surface0);
   border-radius: 6px;
   overflow-x: auto;
   font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
   white-space: pre;
 }
 
 .tx-assistant code {
-  font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
   font-size: 12px;
 }
 
 .tx-assistant code.tx-inline-code {
   background: var(--ctp-surface0);
-  padding: 1px 5px;
-  border-radius: 3px;
+  padding: 1px 4px;
+  border-radius: 2px;
   font-size: 0.92em;
 }
 
@@ -184,24 +198,27 @@
 
 /* ─── Tool use ─── */
 .tx-tool {
+  background: var(--ctp-mantle);
   border-radius: 6px;
-  border: 1px solid var(--ctp-surface1);
-  background: var(--ctp-surface0);
+  margin: 4px 0;
   overflow: hidden;
 }
 
 .tx-tool > summary {
   cursor: pointer;
-  padding: 6px 10px;
-  min-height: 44px;
-  font-size: 12px;
+  padding: 8px 12px;
+  font-size: 13px;
   font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
   color: var(--ctp-subtext0);
   list-style: none;
   user-select: none;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+}
+
+.tx-tool > summary:hover {
+  background: var(--ctp-surface0);
 }
 
 .tx-tool > summary::-webkit-details-marker {
@@ -213,6 +230,7 @@
   font-size: 9px;
   transition: transform 0.15s;
   flex-shrink: 0;
+  color: var(--ctp-overlay0);
 }
 
 .tx-tool[open] > summary::before {
@@ -221,6 +239,7 @@
 
 .tx-tool-icon {
   flex-shrink: 0;
+  font-size: 14px;
 }
 
 .tx-tool-name {
@@ -229,7 +248,7 @@
 }
 
 .tx-tool-summary {
-  color: var(--ctp-overlay0);
+  color: var(--ctp-overlay1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -238,15 +257,15 @@
 }
 
 .tx-tool-body {
-  border-top: 1px solid var(--ctp-surface1);
-  padding: 8px 10px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--ctp-surface0);
 }
 
 .tx-tool-body pre {
   margin: 0;
   font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
-  font-size: 11px;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--ctp-subtext0);
@@ -254,16 +273,15 @@
   overflow-y: auto;
 }
 
-/* ─── Tool result (inside tool_use details) ─── */
+/* ─── Tool result ─── */
 .tx-tool-result {
-  border-top: 1px solid var(--ctp-surface1);
-  padding: 6px 10px;
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--ctp-overlay0);
-  border-left: 2px solid var(--ctp-green);
-  margin: 0 4px 4px 4px;
-  border-radius: 0 0 4px 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
+  color: var(--ctp-overlay1);
+  border-top: 1px solid var(--ctp-surface0);
+  border-left: 3px solid var(--ctp-green);
   white-space: pre-wrap;
   word-break: break-all;
   max-height: 200px;
@@ -277,9 +295,10 @@
 
 /* ─── Tool spinner (no result yet) ─── */
 .tx-tool-pending {
-  padding: 6px 10px;
-  font-size: 11px;
+  padding: 6px 12px;
+  font-size: 12px;
   color: var(--ctp-overlay0);
+  border-top: 1px solid var(--ctp-surface0);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -297,11 +316,11 @@
 
 /* ─── System ─── */
 .tx-system {
-  color: var(--ctp-overlay0);
+  color: var(--ctp-surface2);
   font-style: italic;
   text-align: center;
-  font-size: 12px;
-  padding: 4px 8px;
+  font-size: 11px;
+  padding: 2px 0;
 }
 
 /* ─── Empty state ─── */
@@ -322,10 +341,109 @@
   text-align: center;
 }
 
+/* ─── Live thinking indicator ─── */
+.tx-live-thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  color: var(--ctp-overlay0);
+  font-size: 12px;
+}
+
+.tx-live-thinking-dots {
+  display: flex;
+  gap: 3px;
+}
+
+.tx-live-thinking-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ctp-mauve);
+  animation: txDotPulse 1.4s ease-in-out infinite;
+}
+
+.tx-live-thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.tx-live-thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes txDotPulse {
+  0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+.tx-live-thinking-text {
+  color: var(--ctp-subtext0);
+}
+
+/* ─── Permission request banner ─── */
+.tx-live-permission {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  margin-top: 8px;
+  background: color-mix(in srgb, var(--ctp-red) 8%, var(--ctp-surface0));
+  border: 1px solid color-mix(in srgb, var(--ctp-red) 30%, var(--ctp-surface1));
+  border-radius: 6px;
+}
+
+.tx-live-permission-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.tx-live-permission-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.tx-live-permission-title {
+  font-weight: 600;
+  color: var(--ctp-red);
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+
+.tx-live-permission-detail {
+  color: var(--ctp-subtext0);
+  font-size: 12px;
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+
+.tx-live-permission-grant {
+  padding: 6px 16px;
+  border-radius: 4px;
+  border: none;
+  background: var(--ctp-red);
+  color: var(--ctp-base);
+  font-weight: 600;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  min-height: 36px;
+}
+
+.tx-live-permission-grant:hover {
+  filter: brightness(1.1);
+}
+
+.tx-live-permission-grant:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tx-live-permission-note {
+  font-size: 11px;
+  color: var(--ctp-overlay0);
+  margin-top: 4px;
+}
+
 /* ─── Tablet+ ─── */
 @media (min-width: 768px) {
   .transcript-view {
-    padding: 12px 16px;
+    padding: 10px 16px;
   }
 
   .transcript-jump {

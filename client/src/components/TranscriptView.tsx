@@ -1,6 +1,8 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { useTranscript } from '../hooks/useTranscript';
-import type { TranscriptEntry } from '../types';
+import { api } from '../api';
+import { formatToolDetail, getStatusClass } from '../utils';
+import type { TranscriptEntry, Session } from '../types';
 import './TranscriptView.css';
 
 // ─── Inline text formatting (no markdown library) ───
@@ -65,16 +67,23 @@ interface PairedEntry {
 }
 
 function pairEntries(entries: TranscriptEntry[]): PairedEntry[] {
+  // Filter out entries with empty content (these render as empty bars)
+  const filtered = entries.filter(e => {
+    if (e.type === 'tool_use') return true; // tool_use always has tool_name
+    if (e.type === 'tool_result') return true; // tool_result paired with tool_use
+    const content = typeof e.content === 'string' ? e.content.trim() : '';
+    return content.length > 0;
+  });
+
   const paired: PairedEntry[] = [];
   let i = 0;
-  while (i < entries.length) {
-    const entry = entries[i];
-    if (entry.type === 'tool_use' && i + 1 < entries.length && entries[i + 1].type === 'tool_result') {
-      paired.push({ entry, result: entries[i + 1] });
+  while (i < filtered.length) {
+    const entry = filtered[i];
+    if (entry.type === 'tool_use' && i + 1 < filtered.length && filtered[i + 1].type === 'tool_result') {
+      paired.push({ entry, result: filtered[i + 1] });
       i += 2;
     } else if (entry.type === 'tool_result') {
-      // Orphan tool_result — render as standalone
-      paired.push({ entry });
+      // Orphan tool_result — skip (shows as a stray bar otherwise)
       i += 1;
     } else {
       paired.push({ entry });
@@ -84,13 +93,19 @@ function pairEntries(entries: TranscriptEntry[]): PairedEntry[] {
   return paired;
 }
 
+function safeString(val: unknown): string {
+  if (typeof val === 'string') return val;
+  if (val == null) return '';
+  return JSON.stringify(val, null, 2);
+}
+
 function renderEntry({ entry, result }: PairedEntry, index: number) {
   switch (entry.type) {
     case 'user':
       return (
         <div key={index} className="tx-entry tx-user">
           <span className="tx-user-prefix">{'\u276f'}</span>
-          {entry.content}
+          {safeString(entry.content)}
         </div>
       );
 
@@ -98,7 +113,7 @@ function renderEntry({ entry, result }: PairedEntry, index: number) {
       return (
         <details key={index} className="tx-entry tx-thinking">
           <summary>Thinking...</summary>
-          <div className="tx-thinking-content">{entry.content}</div>
+          <div className="tx-thinking-content">{safeString(entry.content)}</div>
         </details>
       );
 
@@ -107,7 +122,7 @@ function renderEntry({ entry, result }: PairedEntry, index: number) {
         <div
           key={index}
           className="tx-entry tx-assistant"
-          dangerouslySetInnerHTML={{ __html: formatAssistantHtml(entry.content) }}
+          dangerouslySetInnerHTML={{ __html: formatAssistantHtml(safeString(entry.content)) }}
         />
       );
 
@@ -124,12 +139,12 @@ function renderEntry({ entry, result }: PairedEntry, index: number) {
           </summary>
           {entry.tool_input_full && (
             <div className="tx-tool-body">
-              <pre>{entry.tool_input_full}</pre>
+              <pre>{safeString(entry.tool_input_full)}</pre>
             </div>
           )}
           {result ? (
             <div className={`tx-tool-result${result.is_error ? ' tx-error' : ''}`}>
-              {result.content}
+              {safeString(result.content)}
             </div>
           ) : (
             <div className="tx-tool-pending">
@@ -144,14 +159,14 @@ function renderEntry({ entry, result }: PairedEntry, index: number) {
       // Orphan tool_result (not paired with tool_use)
       return (
         <div key={index} className={`tx-entry tx-tool-result${entry.is_error ? ' tx-error' : ''}`}>
-          {entry.content}
+          {safeString(entry.content)}
         </div>
       );
 
     case 'system':
       return (
         <div key={index} className="tx-entry tx-system">
-          {entry.content}
+          {safeString(entry.content)}
         </div>
       );
 
@@ -164,9 +179,11 @@ function renderEntry({ entry, result }: PairedEntry, index: number) {
 
 interface TranscriptViewProps {
   sessionId: string;
+  session?: Session;
+  queuedMessages?: string[];
 }
 
-export function TranscriptView({ sessionId }: TranscriptViewProps) {
+export function TranscriptView({ sessionId, session, queuedMessages }: TranscriptViewProps) {
   const { entries, loading, error, loadOlder, hasMore } = useTranscript(sessionId);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
@@ -262,6 +279,17 @@ export function TranscriptView({ sessionId }: TranscriptViewProps) {
         )}
 
         {paired.map((p, i) => renderEntry(p, i))}
+
+        {/* Queued messages — shown immediately before transcript confirms them */}
+        {queuedMessages?.map((msg, i) => (
+          <div key={`queued-${i}`} className="tx-entry tx-user tx-queued">
+            <span className="tx-user-prefix">{'\u276f'}</span>
+            {msg}
+          </div>
+        ))}
+
+        {/* Live status indicators */}
+        {session && <LiveStatus session={session} entries={entries} />}
       </div>
 
       {isScrolledUp && (
@@ -271,4 +299,82 @@ export function TranscriptView({ sessionId }: TranscriptViewProps) {
       )}
     </>
   );
+}
+
+// ─── Live status: thinking indicator + permission request ───
+
+function LiveStatus({ session, entries }: { session: Session; entries: TranscriptEntry[] }) {
+  const statusClass = getStatusClass(session);
+  const [granting, setGranting] = useState(false);
+
+  const handleGrant = useCallback(async () => {
+    setGranting(true);
+    try {
+      await api.grantPermission(session.session_id);
+    } catch { /* handled by WS */ }
+    setGranting(false);
+  }, [session.session_id]);
+
+  // Permission request
+  if (statusClass === 'waiting') {
+    const toolDetail = session.pending_tool
+      ? formatToolDetail(session.pending_tool, session.pending_tool_input)
+      : 'a tool';
+
+    return (
+      <div className="tx-live-permission">
+        <div className="tx-live-permission-icon">⏸</div>
+        <div className="tx-live-permission-body">
+          <div className="tx-live-permission-title">Permission requested</div>
+          <div className="tx-live-permission-detail">{toolDetail}</div>
+          <button
+            className="tx-live-permission-grant"
+            onClick={handleGrant}
+            disabled={granting || !session.tmux_target}
+          >
+            {granting ? 'Granting...' : 'Grant Permission'}
+          </button>
+          {!session.tmux_target && (
+            <div className="tx-live-permission-note">Link a tmux session to grant permissions</div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Active indicator — use transcript entries to determine actual state
+  if (statusClass === 'active' && entries.length > 0) {
+    const last = entries[entries.length - 1];
+
+    // A tool_use without a following tool_result means a tool is actively running
+    if (last.type === 'tool_use') {
+      return (
+        <div className="tx-live-thinking">
+          <div className="tx-live-thinking-dots">
+            <span /><span /><span />
+          </div>
+          <span className="tx-live-thinking-text">
+            Working — {last.tool_name || 'tool'}
+          </span>
+        </div>
+      );
+    }
+
+    // Recent heartbeat but no active tool — model is thinking/generating
+    if (session.last_heartbeat) {
+      const age = (Date.now() - new Date(session.last_heartbeat.includes('T') ? session.last_heartbeat : session.last_heartbeat.replace(' ', 'T') + 'Z').getTime()) / 1000;
+      if (age < 10 && last.type !== 'assistant') {
+        return (
+          <div className="tx-live-thinking">
+            <div className="tx-live-thinking-dots">
+              <span /><span /><span />
+            </div>
+            <span className="tx-live-thinking-text">Thinking...</span>
+          </div>
+        );
+      }
+    }
+  }
+
+  return null;
 }

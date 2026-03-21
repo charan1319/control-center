@@ -104,16 +104,16 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
           case 'event':
             if (msg.event === 'Heartbeat') {
-              // Update session in-place
+              // Update session in-place — preserve 'stopped' and 'waiting_permission'
               setSessions(prev => prev.map(s =>
                 s.session_id === msg.session_id
-                  ? { ...s, last_tool: msg.tool_name ?? s.last_tool, last_heartbeat: msg.timestamp ?? s.last_heartbeat, status: s.status === 'stopped' ? 'stopped' : 'active' }
+                  ? { ...s, last_tool: msg.tool_name ?? s.last_tool, last_heartbeat: msg.timestamp ?? s.last_heartbeat, status: (s.status === 'stopped' || s.status === 'waiting_permission') ? s.status : 'active' }
                   : s
               ));
             } else if (msg.event === 'PermissionRequest' && !msg.auto_approved) {
               setSessions(prev => prev.map(s =>
                 s.session_id === msg.session_id
-                  ? { ...s, status: 'waiting_permission' as const }
+                  ? { ...s, status: 'waiting_permission' as const, pending_tool: msg.tool_name ?? null, pending_tool_input: msg.tool_input ?? null }
                   : s
               ));
               setRecentEvents(prev => [msg as unknown as SessionEvent, ...prev].slice(0, 200));

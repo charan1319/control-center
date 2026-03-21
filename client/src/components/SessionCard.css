@@ -44,6 +44,12 @@
   box-shadow: 0 0 0 1px var(--ctp-blue);
 }
 
+.session-card.drop-target {
+  border-color: var(--ctp-lavender);
+  box-shadow: 0 0 0 2px var(--ctp-lavender);
+  background: color-mix(in srgb, var(--ctp-lavender) 8%, var(--ctp-surface0));
+}
+
 @keyframes cardPulseBorder {
   0%, 100% { box-shadow: 0 0 0 1px var(--ctp-red); }
   50% { box-shadow: 0 0 6px 1px var(--ctp-red); }

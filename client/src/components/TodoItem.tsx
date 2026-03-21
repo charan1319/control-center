@@ -72,8 +72,21 @@ export function TodoItem({ todo, onRefresh, sessionStopped }: TodoItemProps) {
 
   const showStopped = sessionStopped && todo.status === 'in_progress' && !stoppedDismissed;
 
+  const handleDragStart = useCallback((e: React.DragEvent) => {
+    e.dataTransfer.setData('application/x-todo', JSON.stringify({
+      id: todo.id,
+      title: todo.title,
+      details: todo.details || '',
+    }));
+    e.dataTransfer.effectAllowed = 'copy';
+  }, [todo.id, todo.title, todo.details]);
+
   return (
-    <div className={`todo-item status-${todo.status}`}>
+    <div
+      className={`todo-item status-${todo.status}`}
+      draggable={todo.status !== 'done'}
+      onDragStart={handleDragStart}
+    >
       <div className="todo-item-row">
         <span className={`todo-status-dot ${todo.status}`} />
         <span

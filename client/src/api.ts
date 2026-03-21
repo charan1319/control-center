@@ -12,15 +12,17 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     signal: init?.signal ?? AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
 function post<T>(url: string, body?: unknown): Promise<T> {
-  return fetchJson<T>(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const init: RequestInit = { method: 'POST' };
+  if (body) {
+    init.headers = { 'Content-Type': 'application/json' };
+    init.body = JSON.stringify(body);
+  }
+  return fetchJson<T>(url, init);
 }
 
 function put<T>(url: string, body: unknown): Promise<T> {
@@ -40,11 +42,12 @@ function patch<T>(url: string, body: unknown): Promise<T> {
 }
 
 function del<T>(url: string, body?: unknown): Promise<T> {
-  return fetchJson<T>(url, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const init: RequestInit = { method: 'DELETE' };
+  if (body) {
+    init.headers = { 'Content-Type': 'application/json' };
+    init.body = JSON.stringify(body);
+  }
+  return fetchJson<T>(url, init);
 }
 
 export const api = {

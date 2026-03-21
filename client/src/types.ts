@@ -117,7 +117,7 @@ export interface Stats {
 export type WSIncoming =
   | { type: 'init'; sessions: Session[]; recentEvents: SessionEvent[] }
   | { type: 'session_update'; session: Session }
-  | { type: 'event'; event: string; session_id: string; tool_name?: string; timestamp?: string; auto_approved?: boolean }
+  | { type: 'event'; event: string; session_id: string; tool_name?: string; tool_input?: string; timestamp?: string; auto_approved?: boolean }
   | { type: 'transcript_update'; session_id: string; entries: TranscriptEntry[] }
   | { type: 'todo_session_stopped'; todo_id: number; session_id: string };
 

@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { useApi } from '../hooks/useApi';
 import { api } from '../api';
+import { useToast } from './Toast';
 import {
   getStatusClass, getStatusText, getDetailText,
   formatToolDetail, timeAgo, escapeHtml,
@@ -20,9 +21,11 @@ interface SessionCardProps {
 }
 
 function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEvents }: SessionCardProps) {
+  const { showToast } = useToast();
   const [editOpen, setEditOpen] = useState(false);
   const [linkTmuxOpen, setLinkTmuxOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
   const statusClass = getStatusClass(session);
   const statusText = getStatusText(session);
@@ -67,10 +70,11 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
     e.stopPropagation();
     try {
       await api.grantPermission(session.session_id);
+      showToast('Permission granted', 'success');
     } catch {
-      // handled by WS update
+      showToast('Failed to grant permission', 'error');
     }
-  }, [session.session_id]);
+  }, [session.session_id, showToast]);
 
   const handleKill = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -117,10 +121,41 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
     }
   }, [session.session_id, session.pulse_enabled]);
 
+  const canAcceptDrop = !isStopped && !!session.tmux_target;
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!canAcceptDrop || !e.dataTransfer.types.includes('application/x-todo')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setDragOver(true);
+  }, [canAcceptDrop]);
+
+  const handleDragLeave = useCallback(() => {
+    setDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const raw = e.dataTransfer.getData('application/x-todo');
+    if (!raw) return;
+    try {
+      const todo = JSON.parse(raw);
+      const text = `## Task: ${todo.title}${todo.details ? '\n' + todo.details : ''}`;
+      await api.sendInput(session.session_id, text);
+      showToast(`Sent "${todo.title}" to ${session.label || session.session_id.slice(0, 8)}`, 'success');
+    } catch {
+      showToast('Failed to send todo', 'error');
+    }
+  }, [session.session_id, session.label, showToast]);
+
   return (
     <div
-      className={`session-card status-${statusClass}${isSelected ? ' selected' : ''}`}
+      className={`session-card status-${statusClass}${isSelected ? ' selected' : ''}${dragOver ? ' drop-target' : ''}`}
       onClick={onSelect}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
       <div className="card-header">
         <span className={`indicator ${statusClass}`} />

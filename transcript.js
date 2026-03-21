@@ -94,13 +94,33 @@ export function readTranscriptStructured(filePath, maxBytes = 65536) {
 
         if (obj.type === 'user') {
           const content = obj.message?.content;
-          let text = '';
-          if (typeof content === 'string') {
-            text = content;
-          } else if (Array.isArray(content)) {
-            text = content.filter(b => b.type === 'text').map(b => b.text || '').join('\n');
+          if (Array.isArray(content)) {
+            // Extract tool_result blocks (new format: tool_result inside user messages)
+            const textParts = [];
+            for (const block of content) {
+              if (block.type === 'tool_result') {
+                const rawContent = block.content;
+                let text = '';
+                if (typeof rawContent === 'string') {
+                  text = rawContent;
+                } else if (Array.isArray(rawContent)) {
+                  text = rawContent.map(x => x.text || '').join(' ');
+                }
+                entries.push({
+                  type: 'tool_result',
+                  content: text.slice(0, 500),
+                  is_error: block.is_error || false,
+                  timestamp,
+                });
+              } else if (block.type === 'text') {
+                textParts.push(block.text || '');
+              }
+            }
+            const userText = textParts.join('\n');
+            if (userText) entries.push({ type: 'user', content: userText, timestamp });
+          } else if (typeof content === 'string') {
+            if (content) entries.push({ type: 'user', content, timestamp });
           }
-          if (text) entries.push({ type: 'user', content: text, timestamp });
 
         } else if (obj.type === 'assistant') {
           const content = obj.message?.content;
@@ -116,13 +136,14 @@ export function readTranscriptStructured(filePath, maxBytes = 65536) {
                 content: summarizeToolInput(block.name, block.input),
                 tool_name: block.name || '',
                 tool_input_summary: summarizeToolInput(block.name, block.input),
-                tool_input_full: block.input,
+                tool_input_full: typeof block.input === 'string' ? block.input : JSON.stringify(block.input, null, 2),
                 timestamp,
               });
             }
           }
 
         } else if (obj.type === 'tool_result') {
+          // Legacy format: top-level tool_result entries
           const rawContent = obj.content;
           let text = '';
           if (typeof rawContent === 'string') {

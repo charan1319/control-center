@@ -6,16 +6,20 @@ interface InputBarProps {
   sessionId: string;
   mode: 'transcript' | 'terminal';
   terminalWs?: WebSocket | null;
+  onMessageSent?: (text: string) => void;
 }
 
-export function InputBar({ sessionId, mode, terminalWs }: InputBarProps) {
+export function InputBar({ sessionId, mode, terminalWs, onMessageSent }: InputBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [value, setValue] = useState('');
 
-  // Focus textarea on mount
+  // Focus textarea on mount — only for transcript mode.
+  // In terminal mode, xterm.js should have focus for keyboard input.
   useEffect(() => {
-    textareaRef.current?.focus();
-  }, []);
+    if (mode === 'transcript') {
+      textareaRef.current?.focus();
+    }
+  }, [mode]);
 
   // Auto-grow textarea
   const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -45,6 +49,7 @@ export function InputBar({ sessionId, mode, terminalWs }: InputBarProps) {
     const text = value.trim();
     if (!text) return;
     sendText(text);
+    if (mode === 'transcript' && onMessageSent) onMessageSent(text);
     setValue('');
     // Reset textarea height
     if (textareaRef.current) {
