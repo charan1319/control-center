@@ -655,3 +655,100 @@ describe('TODO Tracker API', () => {
     assert.equal(res.statusCode, 404);
   });
 });
+
+describe('Multi-CLI support (cli_type)', () => {
+  it('Hook ingestion with cli_type=gemini stores cli_type on the session', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'SessionStart',
+        session_id: 'gemini-test-1',
+        cwd: '/tmp/gemini-proj',
+        cli_type: 'gemini',
+        tmux_session: 'cc-gemini-test',
+      },
+    });
+    assert.equal(res.statusCode, 204);
+
+    const sessionRes = await app.inject({ method: 'GET', url: '/api/sessions/gemini-test-1' });
+    assert.equal(sessionRes.statusCode, 200);
+    assert.equal(sessionRes.json().cli_type, 'gemini');
+  });
+
+  it('Hook ingestion with cli_type=codex stores cli_type on the session', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'SessionStart',
+        session_id: 'codex-test-1',
+        cwd: '/tmp/codex-proj',
+        cli_type: 'codex',
+        transcript_path: '/tmp/codex-transcript.jsonl',
+        tmux_session: 'cc-codex-test',
+      },
+    });
+    assert.equal(res.statusCode, 204);
+
+    const sessionRes = await app.inject({ method: 'GET', url: '/api/sessions/codex-test-1' });
+    assert.equal(sessionRes.statusCode, 200);
+    assert.equal(sessionRes.json().cli_type, 'codex');
+  });
+
+  it('Sessions without cli_type default to claude', async () => {
+    const sessionRes = await app.inject({ method: 'GET', url: '/api/sessions/test-1' });
+    assert.equal(sessionRes.statusCode, 200);
+    assert.equal(sessionRes.json().cli_type, 'claude');
+  });
+
+  it('Gemini tool names are auto-approved via tool name mapping (read_file -> Read)', async () => {
+    // First ensure the gemini session is active and not waiting_permission
+    await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'SessionStart',
+        session_id: 'gemini-test-1',
+        cwd: '/tmp/gemini-proj',
+        cli_type: 'gemini',
+        tmux_session: 'cc-gemini-test',
+      },
+    });
+
+    // read_file should be auto-approved (maps to Read which is in the default auto-approve list)
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'PermissionRequest',
+        session_id: 'gemini-test-1',
+        tool_name: 'read_file',
+        tool_input: { path: '/tmp/foo.js' },
+        cli_type: 'gemini',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().auto_approve, true);
+
+    // Session should NOT be in waiting_permission (was auto-approved)
+    const sessionRes = await app.inject({ method: 'GET', url: '/api/sessions/gemini-test-1' });
+    assert.notEqual(sessionRes.json().status, 'waiting_permission');
+  });
+
+  it('Gemini write_file is NOT auto-approved (maps to Write, not in safe list)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'PermissionRequest',
+        session_id: 'gemini-test-1',
+        tool_name: 'write_file',
+        tool_input: { path: '/tmp/evil.js', content: 'bad stuff' },
+        cli_type: 'gemini',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().auto_approve, false);
+  });
+});

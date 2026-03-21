@@ -173,12 +173,19 @@ async function generateSummary(transcript) {
 // File-editing tools that are never auto-approved in "no-edits" mode
 const EDIT_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
+// Map Gemini CLI tool names to Claude Code equivalents for auto-approve matching
+const GEMINI_TOOL_MAP = { edit_file: 'Edit', write_file: 'Write', read_file: 'Read', shell: 'Bash', list_directory: 'LS', search_files: 'Grep', glob_tool: 'Glob' };
+
 // auto_approve DB values: 0 = none, 1 = full (config-driven), 2 = no-edits (all except file writes)
 function shouldAutoApprove(payload, session) {
   const mode = session?.auto_approve ?? 1; // default: full
   if (mode === 0) return false;
 
-  const toolName = payload.tool_name || '';
+  // Normalize Gemini tool names to Claude equivalents
+  let toolName = payload.tool_name || '';
+  if (payload.cli_type === 'gemini' && GEMINI_TOOL_MAP[toolName]) {
+    toolName = GEMINI_TOOL_MAP[toolName];
+  }
 
   if (mode === 2) {
     // No-edits mode: approve everything the full mode would, except file-editing tools
@@ -193,7 +200,7 @@ function shouldAutoApprove(payload, session) {
       const input = typeof payload.tool_input === 'string'
         ? JSON.parse(payload.tool_input)
         : (payload.tool_input || {});
-      const command = (input.command || '').trimStart();
+      const command = (input.command || input.cmd || '').trimStart();
       if (command && new RegExp(config.autoApproveBashPattern).test(command)) return true;
     } catch { /* ignore */ }
   }
@@ -646,6 +653,7 @@ export async function buildServer(opts = {}) {
         cwd: payload.cwd,
         model: payload.model,
         transcript: payload.transcript_path,
+        cli_type: payload.cli_type,
       });
       // Auto-link tmux target by matching cwd, and apply any pending label from launch
       // Prefer the tmux session name reported by the hook (unambiguous),
@@ -863,7 +871,7 @@ export async function buildServer(opts = {}) {
   // ──────────────────────────────────────────────
 
   fastify.post('/api/sessions/launch', async (request, reply) => {
-    const { label, cwd, initialPrompt, project, autoApprove, skipPermissions } = request.body || {};
+    const { label, cwd, initialPrompt, project, autoApprove, skipPermissions, cli_type } = request.body || {};
 
     // Input validation
     if (label && (typeof label !== 'string' || label.length > 256)) {
@@ -881,6 +889,9 @@ export async function buildServer(opts = {}) {
     if (project && (typeof project !== 'string' || project.length > 128)) {
       return reply.status(400).send({ error: 'Project must be a string under 128 characters' });
     }
+    if (cli_type && !['claude', 'gemini', 'codex'].includes(cli_type)) {
+      return reply.status(400).send({ error: "cli_type must be 'claude', 'gemini', or 'codex'" });
+    }
 
     try {
       // Inject pulse context into the prompt if a project is specified
@@ -896,6 +907,7 @@ export async function buildServer(opts = {}) {
         cwd: cwd || process.env.HOME,
         initialPrompt: promptWithPulse,
         skipPermissions: !!skipPermissions,
+        cli_type: cli_type || 'claude',
       });
       // Store label/project/autoApprove so the SessionStart hook handler can apply them when auto-linking
       if (label || project || autoApprove !== undefined) {

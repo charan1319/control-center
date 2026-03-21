@@ -32,6 +32,7 @@ try { db.exec(`ALTER TABLE sessions ADD COLUMN pending_tool TEXT`); } catch { /*
 try { db.exec(`ALTER TABLE sessions ADD COLUMN pending_tool_input TEXT`); } catch { /* already exists */ }
 try { db.exec(`ALTER TABLE sessions ADD COLUMN snapshot_hash TEXT`); } catch { /* already exists */ }
 try { db.exec("ALTER TABLE sessions ADD COLUMN pulse_enabled INTEGER DEFAULT 1"); } catch { /* already exists */ }
+try { db.exec("ALTER TABLE sessions ADD COLUMN cli_type TEXT DEFAULT 'claude'"); } catch { /* already exists */ }
 
 db.exec(`
 
@@ -120,12 +121,13 @@ if (ftsCount === 0) {
 
 const stmts = {
   upsertSession: db.prepare(`
-    INSERT INTO sessions (session_id, cwd, model, transcript, status, updated_at)
-    VALUES (@session_id, @cwd, @model, @transcript, 'active', datetime('now'))
+    INSERT INTO sessions (session_id, cwd, model, transcript, cli_type, status, updated_at)
+    VALUES (@session_id, @cwd, @model, @transcript, COALESCE(@cli_type, 'claude'), 'active', datetime('now'))
     ON CONFLICT(session_id) DO UPDATE SET
       cwd = COALESCE(@cwd, cwd),
       model = COALESCE(@model, model),
       transcript = COALESCE(@transcript, transcript),
+      cli_type = COALESCE(@cli_type, cli_type),
       status = 'active',
       updated_at = datetime('now')
   `),
@@ -318,12 +320,13 @@ const stmts = {
 // Public API
 // ──────────────────────────────────────────────
 
-export function upsertSession({ session_id, cwd, model, transcript }) {
+export function upsertSession({ session_id, cwd, model, transcript, cli_type }) {
   return stmts.upsertSession.run({
     session_id,
     cwd: cwd || null,
     model: model || null,
     transcript: transcript || null,
+    cli_type: cli_type || null,
   });
 }
 
