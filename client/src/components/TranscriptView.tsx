@@ -335,7 +335,7 @@ export function TranscriptView({ sessionId, session, queuedMessages }: Transcrip
         ))}
 
         {/* Live status indicators */}
-        {session && <LiveStatus session={session} entries={entries} hasQueuedInput={!!queuedMessages?.length} />}
+        {session && <LiveStatus session={session} entries={entries} hasQueuedInput={visibleQueued.length > 0} />}
       </div>
 
       {isScrolledUp && (
@@ -392,7 +392,7 @@ function LiveStatus({ session, entries, hasQueuedInput }: { session: Session; en
   if (statusClass === 'active' || statusClass === 'idle') {
     const last = entries.length > 0 ? entries[entries.length - 1] : null;
 
-    // User just sent input — show thinking even if last turn ended
+    // User sent input that hasn't appeared in transcript yet
     if (hasQueuedInput) {
       return (
         <div className="tx-live-thinking">
@@ -407,7 +407,21 @@ function LiveStatus({ session, entries, hasQueuedInput }: { session: Session; en
     // Model finished its turn — not thinking
     if (last?.stop_reason === 'end_turn') return null;
 
-    // Only show working/thinking indicators for active sessions
+    // Last entry is user input — Claude should start processing soon
+    // (works for both active and idle, covers the gap between entry appearing
+    // and Claude producing its first response)
+    if (last?.type === 'user') {
+      return (
+        <div className="tx-live-thinking">
+          <div className="tx-live-thinking-dots">
+            <span /><span /><span />
+          </div>
+          <span className="tx-live-thinking-text">Thinking...</span>
+        </div>
+      );
+    }
+
+    // Below: only show for active sessions (heartbeat confirms Claude is alive)
     if (statusClass !== 'active') return null;
 
     // A tool_use without a following tool_result means a tool is actively running
