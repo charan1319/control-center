@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { useTranscript } from '../hooks/useTranscript';
 import { api } from '../api';
 import { formatToolDetail, getStatusClass } from '../utils';
@@ -188,53 +188,53 @@ interface TranscriptViewProps {
   sessionId: string;
   session?: Session;
   queuedMessages?: QueuedMessage[];
-  onClearQueued?: (id: number) => void;
 }
 
-export function TranscriptView({ sessionId, session, queuedMessages, onClearQueued }: TranscriptViewProps) {
+export function TranscriptView({ sessionId, session, queuedMessages }: TranscriptViewProps) {
   const { entries, loading, error, loadOlder, hasMore } = useTranscript(sessionId);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const prevEntriesLenRef = useRef(0);
-  // Track entries count when each queued message was first seen
+  // Track entries count when each queued message was first seen (set via effect, read in useMemo)
   const queuedBaselinesRef = useRef<Map<number, number>>(new Map());
 
-  // Clear queued messages when they appear in the real transcript
+  // Record baseline entry count for new queued messages (runs after render, before next render)
   useEffect(() => {
-    if (!queuedMessages?.length || !onClearQueued) return;
-
-    // Record baseline for new queued messages
+    if (!queuedMessages?.length) {
+      queuedBaselinesRef.current.clear();
+      return;
+    }
     for (const msg of queuedMessages) {
       if (!queuedBaselinesRef.current.has(msg.id)) {
         queuedBaselinesRef.current.set(msg.id, entries.length);
       }
     }
-
     // Clean up baselines for removed messages
     const activeIds = new Set(queuedMessages.map(m => m.id));
     for (const key of queuedBaselinesRef.current.keys()) {
-      if (!activeIds.has(key)) {
-        queuedBaselinesRef.current.delete(key);
-      }
+      if (!activeIds.has(key)) queuedBaselinesRef.current.delete(key);
     }
+  }, [queuedMessages, entries.length]);
 
-    // Check only entries added after each message was queued
-    for (const msg of queuedMessages) {
-      const baseline = queuedBaselinesRef.current.get(msg.id) ?? entries.length;
-      const needle = msg.text.slice(0, 30).trim();
-      if (!needle) continue;
-
-      const newEntries = entries.slice(baseline);
-      if (newEntries.some(e => {
-        if (e.type !== 'user') return false;
-        const content = typeof e.content === 'string' ? e.content : '';
-        return content.includes(needle);
-      })) {
-        onClearQueued(msg.id);
+  // Filter queued messages at render time — hide if matching user entry exists after baseline.
+  // Unlike the old effect-based clearing, this never permanently removes a message from state;
+  // it just skips rendering it. If the match is wrong one render, it self-corrects the next.
+  const visibleQueued = useMemo(() => {
+    if (!queuedMessages?.length) return [];
+    return queuedMessages.filter(msg => {
+      const baseline = queuedBaselinesRef.current.get(msg.id);
+      if (baseline === undefined) return true; // baseline not yet set (first render), show it
+      const needle = msg.text.slice(0, 50).trim();
+      if (!needle) return false;
+      for (let i = baseline; i < entries.length; i++) {
+        if (entries[i].type !== 'user') continue;
+        const content = typeof entries[i].content === 'string' ? entries[i].content : '';
+        if (content.includes(needle)) return false; // real entry exists, hide queued
       }
-    }
-  }, [entries, queuedMessages, onClearQueued]);
+      return true;
+    });
+  }, [entries, queuedMessages]);
 
   // Track scroll position
   const handleScroll = useCallback(() => {
@@ -326,8 +326,8 @@ export function TranscriptView({ sessionId, session, queuedMessages, onClearQueu
 
         {paired.map((p, i) => renderEntry(p, i))}
 
-        {/* Queued messages — shown immediately before transcript confirms them */}
-        {queuedMessages?.map((msg) => (
+        {/* Queued messages — shown until real entry appears in transcript */}
+        {visibleQueued.map((msg) => (
           <div key={`queued-${msg.id}`} className="tx-entry tx-user tx-queued">
             <span className="tx-user-prefix">{'\u276f'}</span>
             {msg.text}
@@ -335,7 +335,7 @@ export function TranscriptView({ sessionId, session, queuedMessages, onClearQueu
         ))}
 
         {/* Live status indicators */}
-        {session && <LiveStatus session={session} entries={entries} />}
+        {session && <LiveStatus session={session} entries={entries} hasQueuedInput={!!queuedMessages?.length} />}
       </div>
 
       {isScrolledUp && (
@@ -349,7 +349,7 @@ export function TranscriptView({ sessionId, session, queuedMessages, onClearQueu
 
 // ─── Live status: thinking indicator + permission request ───
 
-function LiveStatus({ session, entries }: { session: Session; entries: TranscriptEntry[] }) {
+function LiveStatus({ session, entries, hasQueuedInput }: { session: Session; entries: TranscriptEntry[]; hasQueuedInput: boolean }) {
   const statusClass = getStatusClass(session);
   const [granting, setGranting] = useState(false);
 
@@ -388,12 +388,27 @@ function LiveStatus({ session, entries }: { session: Session; entries: Transcrip
     );
   }
 
-  // Active indicator — use stop_reason from transcript to determine state
-  if (statusClass === 'active') {
+  // Active/idle indicator — use stop_reason + queued input to determine state
+  if (statusClass === 'active' || statusClass === 'idle') {
     const last = entries.length > 0 ? entries[entries.length - 1] : null;
+
+    // User just sent input — show thinking even if last turn ended
+    if (hasQueuedInput) {
+      return (
+        <div className="tx-live-thinking">
+          <div className="tx-live-thinking-dots">
+            <span /><span /><span />
+          </div>
+          <span className="tx-live-thinking-text">Thinking...</span>
+        </div>
+      );
+    }
 
     // Model finished its turn — not thinking
     if (last?.stop_reason === 'end_turn') return null;
+
+    // Only show working/thinking indicators for active sessions
+    if (statusClass !== 'active') return null;
 
     // A tool_use without a following tool_result means a tool is actively running
     if (last?.type === 'tool_use') {

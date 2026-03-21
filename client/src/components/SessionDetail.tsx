@@ -99,7 +99,6 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
             sessionId={session.session_id}
             session={session}
             queuedMessages={queuedMessages}
-            onClearQueued={(id) => setQueuedMessages(prev => prev.filter(m => m.id !== id))}
           />
         )}
         {activeTab === 'terminal' && hasTmux && (

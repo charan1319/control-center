@@ -159,6 +159,10 @@ export function readTranscriptStructured(filePath, maxBytes = 65536) {
             is_error: obj.is_error || false,
             timestamp,
           });
+
+        } else if (obj.type === 'queue-operation' && obj.operation === 'enqueue' && obj.content) {
+          // Message queued while Claude was busy — treat as user input
+          entries.push({ type: 'user', content: obj.content, timestamp });
         }
       }
     } finally {
