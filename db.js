@@ -80,6 +80,23 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_file_edits_path ON file_edits(file_path);
 `);
 
+// ── FTS5 full-text search on events ─────────────
+db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
+  tool_name,
+  tool_input,
+  content='events',
+  content_rowid='id'
+)`);
+try { db.exec(`CREATE TRIGGER IF NOT EXISTS events_fts_insert AFTER INSERT ON events BEGIN INSERT INTO events_fts(rowid, tool_name, tool_input) VALUES (new.id, new.tool_name, new.tool_input); END`); } catch { /* trigger may already exist */ }
+try { db.exec(`CREATE TRIGGER IF NOT EXISTS events_fts_delete AFTER DELETE ON events BEGIN INSERT INTO events_fts(events_fts, rowid, tool_name, tool_input) VALUES ('delete', old.id, old.tool_name, old.tool_input); END`); } catch { /* trigger may already exist */ }
+
+// Backfill FTS index from existing events (only if empty)
+const ftsCount = db.prepare('SELECT COUNT(*) as n FROM events_fts').get().n;
+if (ftsCount === 0) {
+  db.exec(`INSERT INTO events_fts(rowid, tool_name, tool_input)
+           SELECT id, tool_name, tool_input FROM events WHERE tool_input IS NOT NULL`);
+}
+
 // ──────────────────────────────────────────────
 // Prepared statements
 // ──────────────────────────────────────────────
@@ -200,6 +217,45 @@ const stmts = {
   updateSnapshotHash: db.prepare(
     'UPDATE sessions SET snapshot_hash = @hash WHERE session_id = @session_id'
   ),
+
+  searchSessions: db.prepare(
+    `SELECT DISTINCT s.session_id, s.label, s.project, s.cwd, s.status,
+         s.created_at, s.updated_at, h.last_seen as last_heartbeat,
+         (SELECT COUNT(*) FROM events WHERE session_id = s.session_id) as tool_count
+    FROM sessions s
+    LEFT JOIN heartbeats h ON h.session_id = s.session_id
+    WHERE (@project IS NULL OR s.project = @project)
+      AND (@from_date IS NULL OR s.created_at >= @from_date)
+      AND (@to_date IS NULL OR s.created_at <= @to_date)
+      AND (
+        @q IS NULL
+        OR s.label LIKE '%' || @q || '%'
+        OR s.session_id IN (
+          SELECT DISTINCT e.session_id FROM events e
+          JOIN events_fts ef ON ef.rowid = e.id
+          WHERE events_fts MATCH @q
+        )
+      )
+    ORDER BY s.updated_at DESC
+    LIMIT @limit OFFSET @offset`
+  ),
+
+  countSearchSessions: db.prepare(
+    `SELECT COUNT(DISTINCT s.session_id) as total
+    FROM sessions s
+    WHERE (@project IS NULL OR s.project = @project)
+      AND (@from_date IS NULL OR s.created_at >= @from_date)
+      AND (@to_date IS NULL OR s.created_at <= @to_date)
+      AND (
+        @q IS NULL
+        OR s.label LIKE '%' || @q || '%'
+        OR s.session_id IN (
+          SELECT DISTINCT e.session_id FROM events e
+          JOIN events_fts ef ON ef.rowid = e.id
+          WHERE events_fts MATCH @q
+        )
+      )`
+  ),
 };
 
 // ──────────────────────────────────────────────
@@ -279,6 +335,21 @@ export function getActiveFileConflicts(project) {
 
 export function updateSnapshotHash(session_id, hash) {
   return stmts.updateSnapshotHash.run({ session_id, hash });
+}
+
+export function searchSessions({ project, q, from_date, to_date, limit, offset }) {
+  const params = {
+    project: project || null,
+    q: q || null,
+    from_date: from_date || null,
+    to_date: to_date || null,
+    limit: limit || 50,
+    offset: offset || 0,
+  };
+  if (q) params.q = '"' + q.replace(/"/g, '') + '"';
+  const sessions = stmts.searchSessions.all(params);
+  const { total } = stmts.countSearchSessions.get(params);
+  return { sessions, total };
 }
 
 const setPendingStmt = db.prepare(`

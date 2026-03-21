@@ -438,3 +438,86 @@ describe('File edit tracking', () => {
     assert.ok(res2.json().files.some(f => f.file_path === '/tmp/proj-files/src/index.js'));
   });
 });
+
+describe('GET /api/sessions/history', () => {
+  before(async () => {
+    // Create a session with a known project and label for search tests
+    await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'SessionStart',
+        session_id: 'history-test-1',
+        cwd: '/tmp/history-proj',
+        model: 'claude-sonnet-4-6',
+        tmux_session: 'cc-history-1',
+      },
+    });
+    await app.inject({
+      method: 'PATCH',
+      url: '/api/sessions/history-test-1',
+      payload: { label: 'refactor-auth', project: 'history-project' },
+    });
+
+    // Create a PermissionRequest event with tool_input for FTS search
+    await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'PermissionRequest',
+        session_id: 'history-test-1',
+        tool_name: 'Bash',
+        tool_input: { command: 'npm run deploy-staging' },
+      },
+    });
+
+    // Create a second session in a different project
+    await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'SessionStart',
+        session_id: 'history-test-2',
+        cwd: '/tmp/other-proj',
+        tmux_session: 'cc-history-2',
+      },
+    });
+    await app.inject({
+      method: 'PATCH',
+      url: '/api/sessions/history-test-2',
+      payload: { label: 'fix-bug', project: 'other-project' },
+    });
+  });
+
+  it('returns sessions array and total count', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/history' });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.ok(Array.isArray(body.sessions));
+    assert.ok(typeof body.total === 'number');
+    assert.ok(body.total >= 2);
+  });
+
+  it('search with project filter returns only matching sessions', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/history?project=history-project' });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.ok(body.sessions.length >= 1);
+    assert.ok(body.sessions.every(s => s.project === 'history-project'));
+    assert.ok(!body.sessions.some(s => s.session_id === 'history-test-2'));
+  });
+
+  it('search with empty query returns all sessions', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/history?q=' });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.ok(body.sessions.length >= 2);
+  });
+
+  it('FTS5 search finds sessions by tool input content', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/history?q=deploy-staging' });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.ok(body.sessions.some(s => s.session_id === 'history-test-1'));
+  });
+});

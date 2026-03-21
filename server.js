@@ -782,6 +782,17 @@ export async function buildServer(opts = {}) {
 
   fastify.get('/api/sessions', async () => db.getAllSessions());
 
+  fastify.get('/api/sessions/history', async (request) => {
+    const { project, q, from, to, limit, offset } = request.query;
+    return db.searchSessions({
+      project, q,
+      from_date: from,
+      to_date: to,
+      limit: parseInt(limit) || 50,
+      offset: parseInt(offset) || 0,
+    });
+  });
+
   fastify.get('/api/sessions/:id', async (request, reply) => {
     const session = db.getSession(request.params.id);
     if (!session) return reply.status(404).send({ error: 'Session not found' });
