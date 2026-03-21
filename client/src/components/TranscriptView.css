@@ -215,7 +215,6 @@
   border: 1px solid var(--ctp-surface0);
   border-radius: 8px;
   margin: 6px 0;
-  overflow: hidden;
 }
 
 .tx-tool > summary {
@@ -278,6 +277,7 @@
 .tx-tool-body {
   padding: 8px 12px;
   border-top: 1px solid var(--ctp-surface0);
+  overflow: hidden;
 }
 
 .tx-tool-body pre {
