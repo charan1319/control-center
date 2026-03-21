@@ -5,12 +5,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, basename } from 'node:path';
 import { hostname } from 'node:os';
 import { execFileSync, execFile, execSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, watch, openSync, readSync, fstatSync, closeSync } from 'node:fs';
 import webpush from 'web-push';
 import config from './config.js';
 import * as db from './db.js';
 import * as ptyManager from './pty-manager.js';
-import { readTranscriptTail, getLastAssistantText } from './transcript.js';
+import { readTranscriptTail, getLastAssistantText, readTranscriptStructured, getTranscriptSize } from './transcript.js';
 
 // Configure web-push VAPID keys (no-op if keys not set)
 if (config.pushEnabled) {
@@ -19,6 +19,9 @@ if (config.pushEnabled) {
 
 // Global WebSocket clients for dashboard
 const dashboardClients = new Set();
+
+// Transcript file watchers: session_id → { watcher, subscribers: Set<socket>, lastSize, filePath }
+const transcriptWatchers = new Map();
 
 async function sendPushNotification(title, body, tag = 'cc', url = '/') {
   if (!config.pushEnabled) return;
@@ -323,8 +326,33 @@ export async function buildServer(opts = {}) {
     const recentEvents = db.getRecentEvents(50);
     socket.send(JSON.stringify({ type: 'init', sessions, recentEvents }));
 
-    socket.on('close', () => dashboardClients.delete(socket));
-    socket.on('error', () => dashboardClients.delete(socket));
+    // Track which transcript this socket is subscribed to (at most one)
+    let subscribedSessionId = null;
+
+    socket.on('message', (rawData) => {
+      try {
+        const msg = JSON.parse(rawData.toString());
+
+        if (msg.type === 'subscribe_transcript' && msg.session_id) {
+          // Unsubscribe from previous if any
+          unsubscribeTranscript(socket, subscribedSessionId);
+          subscribedSessionId = msg.session_id;
+          subscribeTranscript(socket, msg.session_id);
+
+        } else if (msg.type === 'unsubscribe_transcript') {
+          unsubscribeTranscript(socket, subscribedSessionId);
+          subscribedSessionId = null;
+        }
+      } catch { /* malformed message */ }
+    });
+
+    const cleanup = () => {
+      dashboardClients.delete(socket);
+      unsubscribeTranscript(socket, subscribedSessionId);
+      subscribedSessionId = null;
+    };
+    socket.on('close', cleanup);
+    socket.on('error', cleanup);
   });
 
   function broadcastEvent(payload) {
@@ -342,6 +370,177 @@ export async function buildServer(opts = {}) {
       try {
         if (client.readyState === 1) client.send(msg);
       } catch { /* client gone */ }
+    }
+  }
+
+  // ──────────────────────────────────────────────
+  // Transcript watcher helpers
+  // ──────────────────────────────────────────────
+
+  function subscribeTranscript(socket, sessionId) {
+    if (!sessionId) return;
+    const session = db.getSession(sessionId);
+    if (!session?.transcript) return;
+
+    let entry = transcriptWatchers.get(sessionId);
+    if (entry) {
+      entry.subscribers.add(socket);
+      return;
+    }
+
+    // Create new watcher
+    const filePath = session.transcript;
+    let lastSize = 0;
+    try {
+      const fd = openSync(filePath, 'r');
+      try { lastSize = fstatSync(fd).size; } finally { closeSync(fd); }
+    } catch { /* file may not exist yet */ }
+
+    let watcher = null;
+    try {
+      // Use polling as fallback (interval 2s) for network/virtual filesystems
+      watcher = watch(filePath, { persistent: false, interval: 2000 }, () => {
+        const w = transcriptWatchers.get(sessionId);
+        if (!w || w.subscribers.size === 0) return;
+
+        let currentSize = 0;
+        try {
+          const fd = openSync(filePath, 'r');
+          try { currentSize = fstatSync(fd).size; } finally { closeSync(fd); }
+        } catch { return; }
+
+        if (currentSize <= w.lastSize) return;
+
+        // Read only the new bytes
+        const newBytes = currentSize - w.lastSize;
+        try {
+          const fd = openSync(filePath, 'r');
+          try {
+            const buf = Buffer.allocUnsafe(newBytes);
+            readSync(fd, buf, 0, newBytes, w.lastSize);
+            const lines = buf.toString('utf8').split('\n');
+            const entries = parseTranscriptLines(lines, false);
+
+            if (entries.length > 0) {
+              const msg = JSON.stringify({
+                type: 'transcript_update',
+                session_id: sessionId,
+                entries,
+              });
+              for (const sub of w.subscribers) {
+                try { if (sub.readyState === 1) sub.send(msg); } catch { /* gone */ }
+              }
+            }
+          } finally { closeSync(fd); }
+        } catch { /* read error */ }
+
+        w.lastSize = currentSize;
+      });
+    } catch { /* watch failed — file may not exist */ }
+
+    entry = { watcher, subscribers: new Set([socket]), lastSize, filePath };
+    transcriptWatchers.set(sessionId, entry);
+  }
+
+  function unsubscribeTranscript(socket, sessionId) {
+    if (!sessionId) return;
+    const entry = transcriptWatchers.get(sessionId);
+    if (!entry) return;
+    entry.subscribers.delete(socket);
+    if (entry.subscribers.size === 0) {
+      if (entry.watcher) {
+        try { entry.watcher.close(); } catch { /* ignore */ }
+      }
+      transcriptWatchers.delete(sessionId);
+    }
+  }
+
+  /**
+   * Parse an array of JSONL lines into structured transcript entries.
+   * Mirrors readTranscriptStructured logic but works on pre-split lines.
+   */
+  function parseTranscriptLines(lines, skipFirst = false) {
+    const entries = [];
+    const startIdx = skipFirst ? 1 : 0;
+    for (let i = startIdx; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      let obj;
+      try { obj = JSON.parse(line); } catch { continue; }
+      const timestamp = obj.timestamp || undefined;
+
+      if (obj.type === 'user') {
+        const content = obj.message?.content;
+        let text = '';
+        if (typeof content === 'string') {
+          text = content;
+        } else if (Array.isArray(content)) {
+          text = content.filter(b => b.type === 'text').map(b => b.text || '').join('\n');
+        }
+        if (text) entries.push({ type: 'user', content: text, timestamp });
+
+      } else if (obj.type === 'assistant') {
+        const content = obj.message?.content;
+        if (!Array.isArray(content)) continue;
+        for (const block of content) {
+          if (block.type === 'thinking') {
+            entries.push({ type: 'thinking', content: block.thinking || '', timestamp });
+          } else if (block.type === 'text') {
+            entries.push({ type: 'assistant', content: block.text || '', timestamp });
+          } else if (block.type === 'tool_use') {
+            const summary = summarizeToolInputInline(block.name, block.input);
+            entries.push({
+              type: 'tool_use',
+              content: summary,
+              tool_name: block.name || '',
+              tool_input_summary: summary,
+              tool_input_full: block.input,
+              timestamp,
+            });
+          }
+        }
+
+      } else if (obj.type === 'tool_result') {
+        const rawContent = obj.content;
+        let text = '';
+        if (typeof rawContent === 'string') {
+          text = rawContent;
+        } else if (Array.isArray(rawContent)) {
+          text = rawContent.map(x => x.text || '').join(' ');
+        }
+        entries.push({
+          type: 'tool_result',
+          content: text.slice(0, 500),
+          is_error: obj.is_error || false,
+          timestamp,
+        });
+      }
+    }
+    return entries;
+  }
+
+  function summarizeToolInputInline(toolName, input) {
+    if (!input) return '';
+    try {
+      const obj = typeof input === 'string' ? JSON.parse(input) : input;
+      switch (toolName) {
+        case 'Edit': case 'Write': case 'MultiEdit': case 'NotebookEdit':
+          return obj.file_path || obj.path || '';
+        case 'Bash':
+          return (obj.command || '').slice(0, 80);
+        case 'Read':
+          return obj.file_path || obj.path || '';
+        case 'Glob':
+          return obj.pattern || '';
+        case 'Grep':
+          return [obj.pattern, obj.path].filter(Boolean).join(' ');
+        case 'WebFetch':
+          return obj.url || '';
+        default:
+          return JSON.stringify(obj).slice(0, 80);
+      }
+    } catch {
+      return String(input).slice(0, 80);
     }
   }
 
@@ -771,6 +970,40 @@ export async function buildServer(opts = {}) {
     if (!session?.transcript) return reply.status(404).send({ error: 'No transcript' });
     const text = getLastAssistantText(session.transcript);
     return { text };
+  });
+
+  // ──────────────────────────────────────────────
+  // REST: Structured transcript
+  // ──────────────────────────────────────────────
+
+  fastify.get('/api/sessions/:id/transcript', async (request, reply) => {
+    const session = db.getSession(request.params.id);
+    if (!session) return reply.status(404).send({ error: 'Session not found' });
+    if (!session.transcript) return reply.status(404).send({ error: 'No transcript' });
+
+    const limit = clampInt(request.query.limit, 100, 1, 1000);
+    const before = request.query.before || null;
+
+    // Scale read size based on requested limit
+    const baseBytes = limit * 1024;
+    const maxBytes = before ? baseBytes * 4 : baseBytes;
+
+    const allEntries = readTranscriptStructured(session.transcript, maxBytes);
+    const fileSize = getTranscriptSize(session.transcript);
+    const readFull = maxBytes >= fileSize;
+
+    let entries;
+    if (before) {
+      const filtered = allEntries.filter(e => e.timestamp && e.timestamp < before);
+      entries = filtered.slice(-limit);
+    } else {
+      entries = allEntries.slice(-limit);
+    }
+
+    // hasMore: true if we didn't read the entire file (there may be older entries)
+    const hasMore = !readFull || (before ? allEntries.some(e => e.timestamp && e.timestamp < before && !entries.includes(e)) : allEntries.length > limit);
+
+    return { entries, hasMore };
   });
 
   // ──────────────────────────────────────────────

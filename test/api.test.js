@@ -1,6 +1,6 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -188,5 +188,91 @@ describe('GET /api/tmux-sessions', () => {
     const res = await app.inject({ method: 'GET', url: '/api/tmux-sessions' });
     assert.equal(res.statusCode, 200);
     assert.ok(Array.isArray(res.json()));
+  });
+});
+
+describe('GET /api/sessions/:id/transcript', () => {
+  const transcriptPath = join(tmpDir, 'test-transcript.jsonl');
+
+  before(async () => {
+    // Create a test transcript JSONL file
+    const lines = [
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: 'Hello, build a feature' }] }, timestamp: '2026-03-20T01:00:00Z' }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'Let me think about this...' }, { type: 'text', text: 'I will help you build that.' }, { type: 'tool_use', name: 'Read', input: { file_path: '/tmp/foo.js' }, id: 'tu1' }] }, timestamp: '2026-03-20T01:00:01Z' }),
+      JSON.stringify({ type: 'tool_result', content: [{ text: 'file content here' }], tool_use_id: 'tu1', timestamp: '2026-03-20T01:00:02Z' }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Done reading the file.' }] }, timestamp: '2026-03-20T01:00:03Z' }),
+    ];
+    writeFileSync(transcriptPath, lines.join('\n') + '\n');
+
+    // Create a session with the transcript path
+    await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'SessionStart',
+        session_id: 'transcript-test-1',
+        cwd: '/tmp/proj',
+        model: 'claude-sonnet-4-6',
+        transcript_path: transcriptPath,
+        tmux_session: 'cc-transcript-test',
+      },
+    });
+  });
+
+  it('returns 404 for missing session', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/nonexistent/transcript' });
+    assert.equal(res.statusCode, 404);
+  });
+
+  it('returns structured transcript entries', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/transcript-test-1/transcript' });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.ok(Array.isArray(body.entries));
+    assert.ok(body.entries.length > 0);
+    assert.ok(typeof body.hasMore === 'boolean');
+  });
+
+  it('returns correct entry types from transcript', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/transcript-test-1/transcript' });
+    const { entries } = res.json();
+    const types = entries.map(e => e.type);
+    assert.ok(types.includes('user'));
+    assert.ok(types.includes('assistant'));
+    assert.ok(types.includes('thinking'));
+    assert.ok(types.includes('tool_use'));
+    assert.ok(types.includes('tool_result'));
+  });
+
+  it('tool_use entries have tool_name and tool_input_summary', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/transcript-test-1/transcript' });
+    const { entries } = res.json();
+    const toolUse = entries.find(e => e.type === 'tool_use');
+    assert.ok(toolUse);
+    assert.equal(toolUse.tool_name, 'Read');
+    assert.equal(toolUse.tool_input_summary, '/tmp/foo.js');
+    assert.ok(toolUse.tool_input_full);
+  });
+
+  it('respects limit parameter', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/transcript-test-1/transcript?limit=2' });
+    const { entries } = res.json();
+    assert.ok(entries.length <= 2);
+  });
+
+  it('returns 404 for session without transcript', async () => {
+    // Create a session without a transcript path
+    await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: {
+        event: 'SessionStart',
+        session_id: 'no-transcript-session',
+        cwd: '/tmp/empty',
+        tmux_session: 'cc-no-transcript',
+      },
+    });
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/no-transcript-session/transcript' });
+    assert.equal(res.statusCode, 404);
   });
 });
