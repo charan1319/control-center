@@ -7,7 +7,10 @@ echo "Pulling latest changes..."
 git pull --ff-only || { echo "Cannot fast-forward — manual intervention needed"; exit 1; }
 
 echo "Installing dependencies..."
-npm install --omit=dev --silent
+npm install --silent
+
+echo "Building frontend..."
+cd "$(dirname "$0")" && npm run build
 
 echo "Deploying hook scripts..."
 HOOKS_DIR="$HOME/.claude/hooks"

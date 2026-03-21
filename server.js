@@ -286,8 +286,12 @@ export async function buildServer(opts = {}) {
 
   await fastify.register(fastifyWebSocket);
 
+  const distDir = join(__dirname, 'dist');
+  const publicDir = join(__dirname, 'public');
+  const staticRoot = existsSync(distDir) ? distDir : publicDir;
+
   await fastify.register(fastifyStatic, {
-    root: join(__dirname, 'public'),
+    root: staticRoot,
     prefix: '/',
   });
 
@@ -955,6 +959,15 @@ export async function buildServer(opts = {}) {
     }
   }, PENDING_LABEL_TTL_MS);
   labelCleanupTimer.unref(); // don't keep process alive for cleanup
+
+  // SPA fallback — serve index.html for non-API/WS routes
+  fastify.setNotFoundHandler((req, reply) => {
+    if (req.url.startsWith('/api/') || req.url.startsWith('/ws/')) {
+      reply.code(404).send({ error: 'Not found' });
+    } else {
+      reply.sendFile('index.html');
+    }
+  });
 
   return fastify;
 }

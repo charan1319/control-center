@@ -12,7 +12,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js",
-    "dev": "node --env-file-if-exists=.env --watch server.js",
+    "dev": "concurrently -n server,client -c blue,green \"node --env-file-if-exists=.env --watch server.js\" \"npx vite --config client/vite.config.ts\"",
+    "build": "npx vite build --config client/vite.config.ts",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
@@ -21,6 +22,19 @@
     "better-sqlite3": "^11.8.0",
     "fastify": "^5.2.0",
     "node-pty": "^1.0.0",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "react": "^19",
+    "react-dom": "^19",
+    "@xterm/xterm": "^5.5",
+    "@xterm/addon-fit": "^0.10",
+    "@xterm/addon-web-links": "^0.11"
+  },
+  "devDependencies": {
+    "vite": "^6",
+    "@vitejs/plugin-react": "^4",
+    "typescript": "^5",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "concurrently": "^9"
   }
 }
