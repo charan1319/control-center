@@ -3,6 +3,7 @@ import { getStatusClass } from '../utils';
 import { api } from '../api';
 import { useToast } from './Toast';
 import { TranscriptView } from './TranscriptView';
+import type { QueuedMessage } from './TranscriptView';
 import { TerminalView } from './TerminalView';
 import { InputBar } from './InputBar';
 import type { Session } from '../types';
@@ -21,11 +22,13 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
   const [activeTab, setActiveTab] = useState<TabId>('transcript');
   const terminalWsRef = useRef<WebSocket | null>(null);
   const [, forceUpdate] = useState(0);
-  const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+  const nextQueueId = useRef(0);
 
   const handleMessageSent = useCallback((text: string) => {
-    setQueuedMessages(prev => [...prev, text]);
-    setTimeout(() => setQueuedMessages(prev => prev.filter(m => m !== text)), 15000);
+    const id = nextQueueId.current++;
+    setQueuedMessages(prev => [...prev, { id, text }]);
+    setTimeout(() => setQueuedMessages(prev => prev.filter(m => m.id !== id)), 60000);
   }, []);
 
   const statusClass = getStatusClass(session);
@@ -96,7 +99,7 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
             sessionId={session.session_id}
             session={session}
             queuedMessages={queuedMessages}
-            onClearQueued={(text) => setQueuedMessages(prev => prev.filter(m => m !== text))}
+            onClearQueued={(id) => setQueuedMessages(prev => prev.filter(m => m.id !== id))}
           />
         )}
         {activeTab === 'terminal' && hasTmux && (

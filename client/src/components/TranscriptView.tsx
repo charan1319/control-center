@@ -179,11 +179,16 @@ function renderEntry({ entry, result }: PairedEntry, index: number) {
 
 // ─── TranscriptView component ───
 
+export interface QueuedMessage {
+  id: number;
+  text: string;
+}
+
 interface TranscriptViewProps {
   sessionId: string;
   session?: Session;
-  queuedMessages?: string[];
-  onClearQueued?: (text: string) => void;
+  queuedMessages?: QueuedMessage[];
+  onClearQueued?: (id: number) => void;
 }
 
 export function TranscriptView({ sessionId, session, queuedMessages, onClearQueued }: TranscriptViewProps) {
@@ -192,20 +197,41 @@ export function TranscriptView({ sessionId, session, queuedMessages, onClearQueu
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const prevEntriesLenRef = useRef(0);
+  // Track entries count when each queued message was first seen
+  const queuedBaselinesRef = useRef<Map<number, number>>(new Map());
 
   // Clear queued messages when they appear in the real transcript
   useEffect(() => {
     if (!queuedMessages?.length || !onClearQueued) return;
-    const userEntries = entries.filter(e => e.type === 'user');
+
+    // Record baseline for new queued messages
     for (const msg of queuedMessages) {
-      // Match on the first 30 chars — enough to identify, short enough to tolerate
-      // minor differences in how the transcript records the message
-      const needle = msg.slice(0, 30).trim();
-      if (needle && userEntries.some(e => {
+      if (!queuedBaselinesRef.current.has(msg.id)) {
+        queuedBaselinesRef.current.set(msg.id, entries.length);
+      }
+    }
+
+    // Clean up baselines for removed messages
+    const activeIds = new Set(queuedMessages.map(m => m.id));
+    for (const key of queuedBaselinesRef.current.keys()) {
+      if (!activeIds.has(key)) {
+        queuedBaselinesRef.current.delete(key);
+      }
+    }
+
+    // Check only entries added after each message was queued
+    for (const msg of queuedMessages) {
+      const baseline = queuedBaselinesRef.current.get(msg.id) ?? entries.length;
+      const needle = msg.text.slice(0, 30).trim();
+      if (!needle) continue;
+
+      const newEntries = entries.slice(baseline);
+      if (newEntries.some(e => {
+        if (e.type !== 'user') return false;
         const content = typeof e.content === 'string' ? e.content : '';
         return content.includes(needle);
       })) {
-        onClearQueued(msg);
+        onClearQueued(msg.id);
       }
     }
   }, [entries, queuedMessages, onClearQueued]);
@@ -301,10 +327,10 @@ export function TranscriptView({ sessionId, session, queuedMessages, onClearQueu
         {paired.map((p, i) => renderEntry(p, i))}
 
         {/* Queued messages — shown immediately before transcript confirms them */}
-        {queuedMessages?.map((msg, i) => (
-          <div key={`queued-${i}`} className="tx-entry tx-user tx-queued">
+        {queuedMessages?.map((msg) => (
+          <div key={`queued-${msg.id}`} className="tx-entry tx-user tx-queued">
             <span className="tx-user-prefix">{'\u276f'}</span>
-            {msg}
+            {msg.text}
           </div>
         ))}
 
@@ -362,12 +388,15 @@ function LiveStatus({ session, entries }: { session: Session; entries: Transcrip
     );
   }
 
-  // Active indicator — use transcript entries to determine actual state
-  if (statusClass === 'active' && entries.length > 0) {
-    const last = entries[entries.length - 1];
+  // Active indicator — use stop_reason from transcript to determine state
+  if (statusClass === 'active') {
+    const last = entries.length > 0 ? entries[entries.length - 1] : null;
+
+    // Model finished its turn — not thinking
+    if (last?.stop_reason === 'end_turn') return null;
 
     // A tool_use without a following tool_result means a tool is actively running
-    if (last.type === 'tool_use') {
+    if (last?.type === 'tool_use') {
       return (
         <div className="tx-live-thinking">
           <div className="tx-live-thinking-dots">
@@ -380,20 +409,15 @@ function LiveStatus({ session, entries }: { session: Session; entries: Transcrip
       );
     }
 
-    // Recent heartbeat but no active tool — model is thinking/generating
-    if (session.last_heartbeat) {
-      const age = (Date.now() - new Date(session.last_heartbeat.includes('T') ? session.last_heartbeat : session.last_heartbeat.replace(' ', 'T') + 'Z').getTime()) / 1000;
-      if (age < 10 && last.type !== 'assistant') {
-        return (
-          <div className="tx-live-thinking">
-            <div className="tx-live-thinking-dots">
-              <span /><span /><span />
-            </div>
-            <span className="tx-live-thinking-text">Thinking...</span>
-          </div>
-        );
-      }
-    }
+    // Session is active and model hasn't signaled end_turn — it's thinking
+    return (
+      <div className="tx-live-thinking">
+        <div className="tx-live-thinking-dots">
+          <span /><span /><span />
+        </div>
+        <span className="tx-live-thinking-text">Thinking...</span>
+      </div>
+    );
   }
 
   return null;

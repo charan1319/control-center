@@ -95,6 +95,7 @@ export function Layout({ selectedSessionId, onSelectSession, onCloseDetail }: La
           <div className="layout-right">
             <div className="detail-panel">
               <SessionDetail
+                key={selectedSession.session_id}
                 session={selectedSession}
                 onClose={onCloseDetail}
               />
