@@ -6,6 +6,9 @@ set -euo pipefail
 # Skip reporting for headless/batch runs that shouldn't appear in the dashboard
 [ "${CC_SKIP_REPORT:-0}" = "1" ] && exit 0
 
+# Server URL — override with CC_SERVER_URL if using a non-default port
+CC_SERVER="${CC_SERVER_URL:-http://127.0.0.1:7700}"
+
 INPUT=$(cat)
 
 # If running inside tmux, capture the session name for unambiguous linking
@@ -32,7 +35,7 @@ PAYLOAD=$(echo "$INPUT" | jq -c \
 }' 2>/dev/null) || { echo "cc-report: jq parse failed" >&2; exit 0; }
 
 curl -sS --max-time 5 \
-  -X POST http://127.0.0.1:7700/api/hooks \
+  -X POST "$CC_SERVER/api/hooks" \
   -H "Content-Type: application/json" \
   -d "$PAYLOAD" \
   > /dev/null 2>&1 || true

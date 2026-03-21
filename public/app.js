@@ -35,10 +35,26 @@ const terminalPanel = document.getElementById('terminal-panel');
 const terminalTitle = document.getElementById('terminal-title');
 const terminalContainer = document.getElementById('terminal-container');
 const connectionStatus = document.getElementById('connection-status');
+const connectionBanner = document.getElementById('connection-banner');
+const toastContainer = document.getElementById('toast-container');
 const newSessionModal = document.getElementById('new-session-modal');
 const editSessionModal = document.getElementById('edit-session-modal');
 const linkTmuxModal = document.getElementById('link-tmux-modal');
 const tmuxSessionList = document.getElementById('tmux-session-list');
+
+// ──────────────────────────────────────────────
+// Toast notifications
+// ──────────────────────────────────────────────
+
+function showToast(message, type = 'info') {
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  toast.addEventListener('click', () => toast.remove());
+  toastContainer.appendChild(toast);
+  // Auto-remove after animation ends (4.5s total: 4.2s visible + 0.3s fade)
+  setTimeout(() => { if (toast.parentNode) toast.remove(); }, 4500);
+}
 
 // ──────────────────────────────────────────────
 // WebSocket — dashboard event stream
@@ -46,26 +62,44 @@ const tmuxSessionList = document.getElementById('tmux-session-list');
 
 let wsReconnectDelay = 1000;
 const WS_MAX_RECONNECT_DELAY = 30000;
+let wsWasConnected = false; // tracks if we ever had a successful connection
 
 function connectDashboardWS() {
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
     return; // Already connecting/connected
   }
 
+  // Show reconnecting state if this is a reconnection attempt
+  if (wsWasConnected) {
+    connectionStatus.className = 'status-dot reconnecting';
+    connectionStatus.title = 'Reconnecting...';
+    connectionBanner.classList.add('visible');
+  }
+
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${protocol}//${location.host}/ws/events`);
 
   ws.onopen = () => {
+    const wasReconnect = wsWasConnected;
+    wsWasConnected = true;
     connectionStatus.className = 'status-dot connected';
     connectionStatus.title = 'Connected';
+    connectionBanner.classList.remove('visible');
     wsReconnectDelay = 1000; // Reset backoff on successful connect
+    if (wasReconnect) {
+      showToast('Connection restored', 'success');
+    }
   };
 
   ws.onclose = () => {
-    connectionStatus.className = 'status-dot disconnected';
-    connectionStatus.title = `Disconnected — reconnecting in ${Math.round(wsReconnectDelay / 1000)}s...`;
+    connectionStatus.className = wsWasConnected ? 'status-dot reconnecting' : 'status-dot disconnected';
+    const delaySec = Math.round(wsReconnectDelay / 1000);
+    connectionStatus.title = `Disconnected — reconnecting in ${delaySec}s...`;
+    if (wsWasConnected) {
+      connectionBanner.classList.add('visible');
+    }
     setTimeout(connectDashboardWS, wsReconnectDelay);
-    wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, WS_MAX_RECONNECT_DELAY);
+    wsReconnectDelay = Math.min(wsReconnectDelay * 2, WS_MAX_RECONNECT_DELAY);
   };
 
   ws.onerror = () => ws.close();
@@ -178,7 +212,9 @@ function renderSessionCard(s) {
   // Transcript preview + AI summary (from caches)
   const preview = previewCache.get(s.session_id)?.text || '';
   const summary = summaryCache.get(s.session_id)?.summary || '';
-
+  const isActive = !isStopped;
+  const showPreviewShimmer = isActive && !preview && s.transcript;
+  const showSummaryShimmer = isActive && !summary && serverInfo.aiSummaryEnabled;
 
   // Kill button: protect server's own directory from accidental kill
   const isServerSession = serverInfo.serverCwd && s.cwd === serverInfo.serverCwd;
@@ -210,8 +246,8 @@ function renderSessionCard(s) {
       </div>
       ${pendingDetail ? `<div class="card-pending-detail" title="${escapeHtml(pendingDetail)}">${escapeHtml(pendingDetail)}</div>` : ''}
       ${!pendingDetail && detail ? `<div class="card-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</div>` : ''}
-      ${preview ? `<div class="card-preview"><span class="card-preview-label">Claude</span>${escapeHtml(preview)}</div>` : ''}
-      ${summary ? `<div class="card-summary">${escapeHtml(summary)}</div>` : ''}
+      ${preview ? `<div class="card-preview"><span class="card-preview-label">Claude</span>${escapeHtml(preview)}</div>` : (showPreviewShimmer ? '<div class="card-preview-loading"></div>' : '')}
+      ${summary ? `<div class="card-summary">${escapeHtml(summary)}</div>` : (showSummaryShimmer ? '<div class="card-summary-loading"></div>' : '')}
       <div class="card-actions">
         ${grantBtn}
         ${s.tmux_target
@@ -243,7 +279,19 @@ function renderSessions() {
   }
 
   if (sessions.length === 0) {
-    sessionsGrid.innerHTML = '<div class="no-sessions">No sessions yet. Start Claude Code in a tmux pane, or click "+ New Session".</div>';
+    sessionsGrid.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">&gt;_</div>
+        <h3>No sessions yet</h3>
+        <p>Claude Code sessions will appear here automatically when you start them.<br>
+        Open a terminal and run <code>claude</code> in any project directory.</p>
+        <button class="btn-launch-prominent" id="btn-empty-launch">+ Launch Session</button>
+      </div>`;
+    document.getElementById('btn-empty-launch')?.addEventListener('click', async () => {
+      await Promise.all([loadProjectPresets(), loadTemplates()]).catch(() => {});
+      nsTemplate.value = '';
+      newSessionModal.showModal();
+    });
     return;
   }
 
@@ -280,7 +328,12 @@ function renderSessions() {
       }
     }
   } else {
-    html += '<div class="no-sessions">No active sessions. Click "+ New Session" to start one.</div>';
+    html += `<div class="empty-state" style="padding:30px 20px">
+      <div class="empty-state-icon">&gt;_</div>
+      <h3>No active sessions</h3>
+      <p>All sessions are stopped. Launch a new one to get started.</p>
+      <button class="btn-launch-prominent" id="btn-empty-launch-active">+ Launch Session</button>
+    </div>`;
   }
 
   // Stopped sessions — collapsible section at the bottom, most recent first
@@ -295,6 +348,13 @@ function renderSessions() {
   }
 
   sessionsGrid.innerHTML = html;
+
+  // Attach empty-state launch button handler (for the "no active" variant)
+  document.getElementById('btn-empty-launch-active')?.addEventListener('click', async () => {
+    await Promise.all([loadProjectPresets(), loadTemplates()]).catch(() => {});
+    nsTemplate.value = '';
+    newSessionModal.showModal();
+  });
 
   // PWA badge: show count of sessions waiting for permission
   if ('setAppBadge' in navigator) {
@@ -317,12 +377,12 @@ function renderSessions() {
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          alert(`Grant failed: ${body.error || 'Unknown error'}`);
+          showToast(`Grant failed: ${body.error || 'Unknown error'}`, 'error');
           btn.disabled = false;
           btn.textContent = '✓ Grant';
         }
       } catch {
-        alert('Grant failed: network error');
+        showToast('Grant failed: network error', 'error');
         btn.disabled = false;
         btn.textContent = '✓ Grant';
       }
@@ -355,9 +415,11 @@ function renderSessions() {
         const res = await fetchWithTimeout(`/api/sessions/${encodeURIComponent(btn.dataset.id)}/kill`, { method: 'POST' });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          alert(`Kill failed: ${body.error || 'Unknown error'}`);
+          showToast(`Kill failed: ${body.error || 'Unknown error'}`, 'error');
+        } else {
+          showToast(`Session "${name}" killed`, 'info');
         }
-      } catch { alert('Kill failed: network error'); }
+      } catch { showToast('Kill failed: network error', 'error'); }
     });
   });
 
@@ -404,9 +466,9 @@ document.getElementById('btn-save-edit').addEventListener('click', async () => {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      alert(`Save failed: ${body.error || 'Unknown error'}`);
+      showToast(`Save failed: ${body.error || 'Unknown error'}`, 'error');
     }
-  } catch { alert('Save failed: network error'); }
+  } catch { showToast('Save failed: network error', 'error'); }
 });
 
 function getStatusClass(session) {
@@ -588,22 +650,27 @@ function openTerminal(sessionId) {
     term.loadAddon(new WebLinksAddon.WebLinksAddon());
   } catch { /* addon may not have loaded */ }
 
-  // Clear any leftover DOM from a previous terminal instance (defensive — xterm
-  // dispose() should remove its elements, but this ensures a clean slate).
-  terminalContainer.innerHTML = '';
-  term.open(terminalContainer);
+  // Show connecting state briefly while xterm initializes
+  terminalContainer.innerHTML = '<div class="terminal-connecting"><div class="connecting-spinner"></div>Connecting to terminal...</div>';
 
-  // Double rAF: the first rAF fires before the browser has finished laying out
-  // the newly-visible panel; the second fires after layout+paint, so the
-  // container has real pixel dimensions when fitAddon.fit() is called.
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    if (fitAddon) fitAddon.fit();
-    if (term) term.focus();
-    // On mobile, scroll the terminal into view so user doesn't have to scroll manually
-    if (window.innerWidth < 900) {
-      terminalPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }));
+  // Use rAF so the "connecting" message renders before xterm takes over
+  requestAnimationFrame(() => {
+    if (!term) return;
+    terminalContainer.innerHTML = '';
+    term.open(terminalContainer);
+
+    // Double rAF: the first rAF fires before the browser has finished laying out
+    // the newly-visible panel; the second fires after layout+paint, so the
+    // container has real pixel dimensions when fitAddon.fit() is called.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (fitAddon) fitAddon.fit();
+      if (term) term.focus();
+      // On mobile, scroll the terminal into view so user doesn't have to scroll manually
+      if (window.innerWidth < 900) {
+        terminalPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }));
+  });
 
   termReconnectAttempts = 0;
   connectTerminalWs(sessionId);
@@ -748,9 +815,9 @@ document.getElementById('btn-cleanup-zombies').addEventListener('click', async (
       const { cleaned } = await res.json();
       refreshStats();
       if (cleaned === 0) {
-        btn.title = 'No stale sessions found';
+        showToast('No stale sessions found', 'info');
       } else {
-        btn.title = `Cleaned up ${cleaned} session${cleaned !== 1 ? 's' : ''}`;
+        showToast(`Cleaned up ${cleaned} session${cleaned !== 1 ? 's' : ''}`, 'success');
       }
     }
   } catch { /* ignore */ } finally {
@@ -806,6 +873,7 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
     }, 30000);
     if (!res.ok) throw new Error((await res.json()).error);
     newSessionModal.close();
+    showToast(`Session "${label}" launched`, 'success');
     // Reset fields
     document.getElementById('ns-label').value = '';
     document.getElementById('ns-cwd').value = '';
@@ -814,7 +882,7 @@ document.getElementById('btn-launch').addEventListener('click', async () => {
     document.getElementById('ns-auto-approve').selectedIndex = 0;
     document.getElementById('ns-skip-permissions').checked = false;
   } catch (err) {
-    alert(`Failed to launch: ${err.message}`);
+    showToast(`Failed to launch: ${err.message}`, 'error');
   } finally {
     launchBtn.disabled = false;
     launchBtn.textContent = 'Launch';
@@ -902,8 +970,9 @@ document.getElementById('btn-save-template').addEventListener('click', async () 
       }),
     });
     await loadTemplates();
+    showToast('Template saved', 'success');
   } catch (err) {
-    alert(`Failed to save template: ${err.message}`);
+    showToast(`Failed to save template: ${err.message}`, 'error');
   }
 });
 
@@ -977,7 +1046,7 @@ document.getElementById('btn-template-form-save').addEventListener('click', asyn
     autoApprove: document.getElementById('te-auto-approve').value,
     prompt: document.getElementById('te-prompt').value.trim(),
   };
-  if (!body.name) { alert('Template name is required'); return; }
+  if (!body.name) { showToast('Template name is required', 'error'); return; }
   try {
     if (editingTemplateId) {
       await fetchWithTimeout(`/api/templates/${encodeURIComponent(editingTemplateId)}`, {
@@ -993,7 +1062,7 @@ document.getElementById('btn-template-form-save').addEventListener('click', asyn
     templatesList.classList.remove('hidden');
     templatesModalFooter.classList.remove('hidden');
     renderTemplateList();
-  } catch (err) { alert(`Failed to save: ${err.message}`); }
+  } catch (err) { showToast(`Failed to save: ${err.message}`, 'error'); }
 });
 
 document.getElementById('btn-close-templates').addEventListener('click', () => templatesModal.close());
@@ -1020,7 +1089,7 @@ async function showLinkTmuxModal(sessionId) {
     const res = await fetchWithTimeout('/api/tmux-sessions');
     tmuxSessions = await res.json();
   } catch {
-    alert('Failed to fetch tmux sessions. Is the server running?');
+    showToast('Failed to fetch tmux sessions', 'error');
     return;
   }
 
@@ -1032,7 +1101,7 @@ async function showLinkTmuxModal(sessionId) {
       try {
         await linkTmuxTarget(sessionId, matches[0].name);
       } catch (err) {
-        alert(`Failed to link tmux session: ${err.message}`);
+        showToast(`Failed to link tmux session: ${err.message}`, 'error');
       }
       return; // no modal needed
     }
@@ -1054,7 +1123,7 @@ async function showLinkTmuxModal(sessionId) {
         try {
           await linkTmuxTarget(linkTargetSessionId, opt.dataset.name);
         } catch (err) {
-          alert(`Failed to link tmux session: ${err.message}`);
+          showToast(`Failed to link tmux: ${err.message}`, 'error');
         }
         linkTmuxModal.close();
       });
@@ -1155,7 +1224,7 @@ document.getElementById('btn-history').addEventListener('click', async () => {
     terminalHistoryLabel.textContent = `Scrollback history · ${lineCount.toLocaleString()} lines`;
     showHistoryPanel(text);
   } catch (err) {
-    alert(`Failed to load history: ${err.message}`);
+    showToast(`Failed to load history: ${err.message}`, 'error');
   } finally {
     if (historyFetchSessionId === capturedSessionId) historyFetchSessionId = null;
     btn.disabled = false;
@@ -1436,6 +1505,89 @@ setInterval(refreshSummaries, 90_000);
 setInterval(refreshStats, 60_000);
 
 // ──────────────────────────────────────────────
+// Update banner
+// ──────────────────────────────────────────────
+
+let updateBannerDismissed = false;
+
+async function checkForUpdate() {
+  if (updateBannerDismissed) return;
+  try {
+    const res = await fetchWithTimeout('/api/version');
+    if (!res.ok) return;
+    const { current, latest, updateAvailable } = await res.json();
+    if (!updateAvailable || !latest) {
+      // Remove banner if update is no longer available (e.g. already updated)
+      const existing = document.getElementById('update-banner');
+      if (existing) existing.remove();
+      return;
+    }
+    showUpdateBanner(current, latest);
+  } catch { /* non-critical */ }
+}
+
+function showUpdateBanner(current, latest) {
+  // Don't duplicate
+  if (document.getElementById('update-banner')) return;
+
+  const banner = document.createElement('div');
+  banner.id = 'update-banner';
+
+  const text = document.createElement('span');
+  text.textContent = `Update available: v${latest} \u2014 you're on v${current}`;
+
+  const updateBtn = document.createElement('button');
+  updateBtn.className = 'update-btn';
+  updateBtn.textContent = 'Update now';
+  updateBtn.addEventListener('click', async () => {
+    if (!confirm('This will pull the latest code, install dependencies, and restart the server. Continue?')) return;
+    updateBtn.disabled = true;
+    updateBtn.textContent = 'Updating...';
+    try {
+      const res = await fetchWithTimeout('/api/update', { method: 'POST' }, 30000);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      showToast('Update started. The server will restart shortly.', 'success');
+      // Replace banner text to indicate update in progress
+      text.textContent = 'Updating... the page will reload when the server restarts.';
+      updateBtn.remove();
+    } catch (err) {
+      showToast(`Update failed: ${err.message}`, 'error');
+      updateBtn.disabled = false;
+      updateBtn.textContent = 'Update now';
+    }
+  });
+
+  const dismissBtn = document.createElement('button');
+  dismissBtn.className = 'update-dismiss';
+  dismissBtn.textContent = '\u00d7';
+  dismissBtn.title = 'Dismiss';
+  dismissBtn.addEventListener('click', () => {
+    updateBannerDismissed = true;
+    banner.remove();
+  });
+
+  banner.appendChild(text);
+  banner.appendChild(updateBtn);
+  banner.appendChild(dismissBtn);
+
+  // Insert after the connection banner
+  const connectionBannerEl = document.getElementById('connection-banner');
+  if (connectionBannerEl && connectionBannerEl.parentNode) {
+    connectionBannerEl.parentNode.insertBefore(banner, connectionBannerEl.nextSibling);
+  } else {
+    // Fallback: insert at the top of body
+    document.body.insertBefore(banner, document.body.firstChild);
+  }
+}
+
+// Check on page load (delayed 5s), then every 30 minutes
+setTimeout(checkForUpdate, 5000);
+setInterval(checkForUpdate, 30 * 60 * 1000);
+
+// ──────────────────────────────────────────────
 // PWA: service worker + push notifications
 // ──────────────────────────────────────────────
 
@@ -1458,7 +1610,7 @@ updateNotifBtn();
 
 async function subscribeToPush() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    alert('Push notifications require HTTPS. Access via your Tailscale URL.');
+    showToast('Push notifications require HTTPS. Use your Tailscale URL.', 'info');
     return;
   }
   const permission = await Notification.requestPermission();
@@ -1468,7 +1620,7 @@ async function subscribeToPush() {
   try {
     const keyRes = await fetchWithTimeout('/api/push/vapid-public-key');
     const { publicKey, enabled } = await keyRes.json();
-    if (!enabled) { alert('Push notifications are not configured on the server.'); return; }
+    if (!enabled) { showToast('Push notifications are not configured on the server', 'info'); return; }
 
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.subscribe({
@@ -1484,7 +1636,7 @@ async function subscribeToPush() {
     if (!res.ok) throw new Error((await res.json()).error);
     notifBtn.title = 'Push notifications enabled';
   } catch (err) {
-    alert(`Failed to enable push notifications: ${err.message}`);
+    showToast(`Push notification setup failed: ${err.message}`, 'error');
   }
 }
 

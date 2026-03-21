@@ -16,10 +16,6 @@ const config = {
   ptyGracePeriodMs: 30_000,      // Keep PTY alive 30s after last client disconnects
   scrollbackBufferSize: 300_000, // Characters of scrollback to replay on connect (history + live)
 
-  // Notifications via OpenClaw → Telegram (leave either empty to disable)
-  openclawBin: process.env.OPENCLAW_BIN || '',
-  telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
-
   // tmux
   tmuxSessionPrefix: 'cc-',
 
@@ -43,6 +39,10 @@ const config = {
   pushEnabled: !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY),
   // Auto-approve Bash: commands matching this prefix pattern are silently approved
   autoApproveBashPattern: '^(ls|ll|find|tree|cat|head|tail|wc|grep|rg|python[0-9.]*|git\\s+(status|log|diff|show|branch|stash\\s+list|remote\\s+-v)|ps|df|du|free|uname|hostname|echo|pwd|which|date|printenv|env)(\\s|$)',
+
+  // Usage stats — disable with CC_TELEMETRY=false in .env
+  telemetryEnabled: process.env.CC_TELEMETRY !== 'false',
+  telemetryUrl: 'https://script.google.com/macros/s/AKfycbxn6CpA0OA04C095757DIkFhT13z5E4B0Eddhf44SdcmHdTwDE9RYrENUgj5PpJtETc/exec',
 };
 
 // Ensure data directory exists

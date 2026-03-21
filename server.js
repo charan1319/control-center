@@ -4,19 +4,21 @@ import fastifyWebSocket from '@fastify/websocket';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, basename } from 'node:path';
 import { hostname } from 'node:os';
-import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync, execFile, execSync } from 'node:child_process';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import webpush from 'web-push';
 import config from './config.js';
 import * as db from './db.js';
 import * as ptyManager from './pty-manager.js';
-import * as notifier from './notifier.js';
 import { readTranscriptTail, getLastAssistantText } from './transcript.js';
 
 // Configure web-push VAPID keys (no-op if keys not set)
 if (config.pushEnabled) {
   webpush.setVapidDetails(config.vapidEmail, config.vapidPublicKey, config.vapidPrivateKey);
 }
+
+// Global WebSocket clients for dashboard
+const dashboardClients = new Set();
 
 async function sendPushNotification(title, body, tag = 'cc', url = '/') {
   if (!config.pushEnabled) return;
@@ -38,6 +40,46 @@ async function sendPushNotification(title, body, tag = 'cc', url = '/') {
 
 const PROJECTS_PATH = join(dirname(fileURLToPath(import.meta.url)), 'data', 'projects.json');
 const TEMPLATES_PATH = join(dirname(fileURLToPath(import.meta.url)), 'data', 'templates.json');
+
+// ──────────────────────────────────────────────
+// Version check (GitHub)
+// ──────────────────────────────────────────────
+
+const LOCAL_VERSION = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'package.json'), 'utf8')).version;
+const GITHUB_PKG_URL = 'https://raw.githubusercontent.com/charan1319/control-center/main/package.json';
+const VERSION_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+let _versionCache = { latest: null, checkedAt: 0 };
+
+/**
+ * Compare two semver strings (e.g. "1.2.3" vs "1.3.0").
+ * Returns true if remote is strictly newer than local.
+ */
+function isNewerVersion(local, remote) {
+  const lp = local.split('.').map(Number);
+  const rp = remote.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((rp[i] || 0) > (lp[i] || 0)) return true;
+    if ((rp[i] || 0) < (lp[i] || 0)) return false;
+  }
+  return false;
+}
+
+async function fetchLatestVersion() {
+  if (Date.now() - _versionCache.checkedAt < VERSION_CACHE_TTL_MS && _versionCache.latest !== null) {
+    return _versionCache.latest;
+  }
+  try {
+    const res = await fetch(GITHUB_PKG_URL, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const pkg = await res.json();
+    _versionCache = { latest: pkg.version, checkedAt: Date.now() };
+    return pkg.version;
+  } catch {
+    // Network error, rate limited, etc. — return cached value or null
+    return _versionCache.latest || null;
+  }
+}
 
 // readTranscriptTail and getLastAssistantText are imported from transcript.js
 
@@ -269,8 +311,6 @@ export async function buildServer(opts = {}) {
   // WebSocket: Dashboard event stream
   // ──────────────────────────────────────────────
 
-  const dashboardClients = new Set();
-
   fastify.get('/ws/events', { websocket: true }, (socket, request) => {
     dashboardClients.add(socket);
 
@@ -424,7 +464,7 @@ export async function buildServer(opts = {}) {
     } else if (event === 'PermissionRequest') {
       const sess = db.getSession(session_id);
       const willAutoApprove = shouldAutoApprove(payload, sess);
-      console.log(`[perm] session=${session_id.slice(0, 8)} tool=${payload.tool_name || '(none)'} mode=${sess?.auto_approve ?? 1} auto=${willAutoApprove}`);
+      fastify.log.debug(`[perm] session=${session_id.slice(0, 8)} tool=${payload.tool_name || '(none)'} mode=${sess?.auto_approve ?? 1} auto=${willAutoApprove}`);
       if (willAutoApprove) {
         autoApproved = true;
         // Claude Code shows the TUI permission prompt AFTER the hook exits, so we
@@ -480,28 +520,15 @@ export async function buildServer(opts = {}) {
     });
     if (session) broadcastSessionUpdate(session);
 
-    // 6. Notify for high-priority events (skip auto-approved — resolved silently).
-    if (!autoApproved && (event === 'Stop' || event === 'PermissionRequest')) {
-      const lastHb = session?.last_heartbeat;
-      const msAgo = lastHb
-        ? Date.now() - new Date(lastHb.replace(' ', 'T') + 'Z').getTime()
-        : Infinity;
-
-      // Telegram: only when idle 30s+ (avoid pinging when user is actively watching)
-      if (msAgo >= 30_000) {
-        notifier.send(payload).catch(() => {});
-      }
-
-      // Web Push: always fire for permission requests — user always wants to know
-      if (event === 'PermissionRequest') {
-        const label = session?.label || session_id.slice(0, 12);
-        sendPushNotification(
-          `Permission needed — ${label}`,
-          `Tool: ${payload.tool_name || 'unknown'}`,
-          `permission-${session_id}`,
-          `/?session=${encodeURIComponent(session_id)}`,
-        ).catch(() => {});
-      }
+    // 6. Web Push notification for permission requests (skip auto-approved — resolved silently).
+    if (!autoApproved && event === 'PermissionRequest') {
+      const label = session?.label || session_id.slice(0, 12);
+      sendPushNotification(
+        `Permission needed — ${label}`,
+        `Tool: ${payload.tool_name || 'unknown'}`,
+        `permission-${session_id}`,
+        `/?session=${encodeURIComponent(session_id)}`,
+      ).catch(() => {});
     }
 
     // For PermissionRequest: return the auto-approve decision so the hook script
@@ -772,6 +799,30 @@ export async function buildServer(opts = {}) {
 
   fastify.get('/api/stats', async () => db.getStats());
 
+  // ──────────────────────────────────────────────
+  // REST: Version check + self-update
+  // ──────────────────────────────────────────────
+
+  fastify.get('/api/version', async () => {
+    const latest = await fetchLatestVersion();
+    return {
+      current: LOCAL_VERSION,
+      latest: latest || null,
+      updateAvailable: latest ? isNewerVersion(LOCAL_VERSION, latest) : false,
+    };
+  });
+
+  fastify.post('/api/update', async (request, reply) => {
+    const updateScript = join(__dirname, 'update.sh');
+    if (!existsSync(updateScript)) {
+      return reply.status(500).send({ error: 'update.sh not found' });
+    }
+    execFile('bash', [updateScript], { cwd: __dirname, timeout: 120_000 }, (err) => {
+      if (err) console.error('[update] failed:', err.message);
+    });
+    return { status: 'updating' };
+  });
+
   fastify.post('/api/sessions/cleanup-zombies', async () => {
     const stoppedIds = cleanupZombies();
     for (const id of stoppedIds) {
@@ -934,6 +985,36 @@ if (isMainModule) {
     };
     runCleanup(); // run once on startup
     setInterval(runCleanup, 24 * 60 * 60 * 1000); // then daily
+  }
+
+  // Usage stats heartbeat (daily)
+  if (config.telemetryEnabled && config.telemetryUrl) {
+    const LOCAL_VERSION = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8')).version;
+    let gitUser = '';
+    try { gitUser = execSync('git config user.name', { encoding: 'utf-8', timeout: 3000 }).trim(); } catch {}
+
+    const sendHeartbeat = () => {
+      const sessions = db.getActiveSessions();
+      const payload = JSON.stringify({
+        type: 'heartbeat',
+        git_user: gitUser,
+        hostname: hostname(),
+        version: LOCAL_VERSION,
+        sessions: sessions.length,
+        dashboard_open: dashboardClients.size > 0,
+        uptime_hours: Math.round(process.uptime() / 3600),
+      });
+      fetch(config.telemetryUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        signal: AbortSignal.timeout(10000),
+      }).catch(() => {});
+    };
+
+    // First heartbeat after 60s, then every 24h
+    setTimeout(sendHeartbeat, 60_000);
+    setInterval(sendHeartbeat, 24 * 60 * 60 * 1000);
   }
 
   // Graceful shutdown: kill PTY bridges, close DB

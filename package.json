@@ -2,7 +2,13 @@
   "name": "control-center",
   "version": "1.0.0",
   "type": "module",
-  "description": "Claude Code session monitoring dashboard",
+  "description": "Self-hosted dashboard for monitoring and managing Claude Code sessions",
+  "author": "Charan Santhirasegaran",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/charan1319/control-center.git"
+  },
   "main": "server.js",
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js",

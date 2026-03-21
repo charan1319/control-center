@@ -40,7 +40,8 @@ body {
   top: 0;
   z-index: 100;
 }
-#header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
+#header h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; color: var(--text-primary); }
+#header h1 span { color: var(--accent); }
 #header-actions { display: flex; align-items: center; gap: 12px; }
 .btn-notif { padding: 6px 10px; font-size: 16px; opacity: 0.35; }
 .btn-notif.notif-granted { opacity: 1; }
@@ -65,8 +66,9 @@ button.primary { background: var(--accent); color: var(--bg-base); border-color:
 button.primary:hover { opacity: 0.9; }
 button.primary:active { opacity: 0.75; }
 
-.status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; transition: background 0.3s; }
 .status-dot.connected { background: var(--green); }
+.status-dot.reconnecting { background: var(--yellow); animation: pulse 1.5s infinite; }
 .status-dot.disconnected { background: var(--red); }
 
 #main-layout {
@@ -150,7 +152,7 @@ button.primary:active { opacity: 0.75; }
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
-  transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s, opacity 0.1s;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.1s, opacity 0.2s;
   min-height: 120px;
   display: flex;
   flex-direction: column;
@@ -462,14 +464,14 @@ dialog select {
   .session-card { min-height: unset; padding: 12px; gap: 4px; }
   .session-card .card-header { margin-bottom: 4px; }
   .session-card .card-preview { display: none; }
-  /* Touch targets: ensure all buttons are at least 40px tall */
-  button { min-height: 40px; padding: 8px 14px; }
-  .session-card .card-actions button { min-height: 36px; font-size: 12px; padding: 6px 10px; }
+  /* Touch targets: ensure all buttons are at least 44px tall */
+  button { min-height: 44px; padding: 8px 14px; }
+  .session-card .card-actions button { min-height: 40px; font-size: 12px; padding: 6px 10px; }
   #terminal-container { height: 55dvh; }
   #terminal-history { height: 55dvh; }
-  #terminal-quick-btns button { min-height: 40px; height: 40px; font-size: 12px; }
-  #terminal-text-input { height: 40px; font-size: 14px; }
-  #btn-terminal-send { height: 40px; }
+  #terminal-quick-btns button { min-height: 44px; height: 44px; font-size: 12px; }
+  #terminal-text-input { height: 44px; font-size: 14px; }
+  #btn-terminal-send { height: 44px; }
   .event-row { grid-template-columns: 55px 80px 1fr; }
   .event-row .ev-detail { display: none; }
   #terminal-panel { margin: 0 8px 12px; }
@@ -479,11 +481,30 @@ dialog select {
   #header h1 { font-size: 14px; }
   /* Sessions grid has less padding on mobile */
   #sessions-grid { padding: 10px 8px; }
+  /* Stats bar wrapping on small screens */
+  #stats-bar { gap: 4px; }
+  /* Empty state smaller on mobile */
+  .empty-state { padding: 40px 16px 30px; }
+  .empty-state-icon { width: 52px; height: 52px; font-size: 24px; }
+  .empty-state h3 { font-size: 16px; }
+  .empty-state p { font-size: 13px; }
+  /* Toast narrower on mobile */
+  #toast-container { left: 12px; right: 12px; max-width: none; }
+  /* Modal on mobile */
+  dialog { padding: 16px; width: 95vw; }
+  dialog .modal-actions { flex-direction: column; }
+  dialog .modal-actions button { width: 100%; min-height: 44px; }
 }
 
 /* Very small screens: hide quick buttons to give text input more space */
 @media (max-width: 380px) {
   #terminal-quick-btns { display: none; }
+}
+
+/* ── Tablet: 2-column session grid ── */
+@media (min-width: 641px) and (max-width: 899px) {
+  .project-sessions { grid-template-columns: repeat(2, 1fr); }
+  #terminal-panel { margin: 0 12px 16px; }
 }
 
 /* ── Desktop split layout: sessions left, terminal+events right ── */
@@ -551,6 +572,199 @@ dialog select {
     min-height: 0;
     height: auto !important;
   }
+}
+
+/* ── Connection banner ── */
+#connection-banner {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--yellow) 15%, var(--bg-surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--yellow) 40%, transparent);
+  font-size: 13px;
+  color: var(--yellow);
+  animation: fadeInDown 0.3s ease;
+}
+#connection-banner.visible { display: flex; }
+#connection-banner .banner-spinner {
+  width: 14px; height: 14px;
+  border: 2px solid color-mix(in srgb, var(--yellow) 30%, transparent);
+  border-top-color: var(--yellow);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fadeInDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ── Update banner ── */
+#update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  font-size: 13px;
+  color: var(--text-secondary);
+  animation: fadeInDown 0.3s ease;
+}
+#update-banner .update-btn {
+  font-size: 12px;
+  padding: 3px 12px;
+  background: var(--accent);
+  color: var(--bg-base);
+  border-color: var(--accent);
+  font-weight: 600;
+  min-height: unset;
+}
+#update-banner .update-btn:hover { opacity: 0.9; }
+#update-banner .update-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+#update-banner .update-dismiss {
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  min-height: unset;
+  opacity: 0.6;
+}
+#update-banner .update-dismiss:hover { opacity: 1; color: var(--text-primary); }
+
+/* ── Toast notifications ── */
+#toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  pointer-events: none;
+  max-width: 360px;
+}
+.toast {
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.4;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+  animation: toastIn 0.3s ease, toastOut 0.3s ease 4.2s forwards;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toast.toast-success { border-color: var(--green); }
+.toast.toast-success::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+.toast.toast-error { border-color: var(--red); }
+.toast.toast-error::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--red); flex-shrink: 0; }
+.toast.toast-info { border-color: var(--accent); }
+.toast.toast-info::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+@keyframes toastIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes toastOut { to { opacity: 0; transform: translateX(20px); } }
+
+/* ── Empty state ── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 60px 24px 40px;
+  gap: 16px;
+}
+.empty-state-icon {
+  width: 64px; height: 64px;
+  border-radius: 16px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.empty-state h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+.empty-state p {
+  font-size: 14px;
+  color: var(--text-muted);
+  max-width: 380px;
+  line-height: 1.6;
+  margin: 0;
+}
+.empty-state code {
+  background: var(--bg-overlay);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--accent);
+}
+.empty-state .btn-launch-prominent {
+  margin-top: 8px;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--accent);
+  color: var(--bg-base);
+  border-color: var(--accent);
+  border-radius: var(--radius);
+}
+.empty-state .btn-launch-prominent:hover { opacity: 0.9; }
+
+/* ── Loading shimmer for card placeholders ── */
+.card-preview-loading,
+.card-summary-loading {
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--bg-overlay) 25%, var(--border) 50%, var(--bg-overlay) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+.card-preview-loading { width: 80%; margin-top: 2px; }
+.card-summary-loading { width: 65%; }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* ── Terminal connecting state ── */
+.terminal-connecting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 14px;
+  gap: 10px;
+  background: #1e1e2e;
+}
+.terminal-connecting .connecting-spinner {
+  width: 16px; height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* ── Event row hover state ── */
+.event-row {
+  transition: background 0.15s;
+}
+.event-row:hover {
+  background: rgba(137, 180, 250, 0.05);
 }
 
 /* PWA standalone: avoid content being hidden behind notches/home indicator */

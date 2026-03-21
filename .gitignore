@@ -4,3 +4,7 @@ data/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+.claude/
+CLAUDE.md
+DEVELOPMENT.md
+google-apps-script.js

@@ -1,93 +1,155 @@
 # Setup Guide
 
-Complete instructions for getting the control center running from scratch on a new machine
-or after a fresh clone.
+Complete instructions for getting Control Center running on a new machine.
+Works on **Linux**, **macOS**, and **WSL2**.
+
+---
+
+## Quick Install (recommended)
+
+The installer handles cloning, dependencies, hooks, and service setup:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/charan1319/control-center/main/install.sh | bash
+```
+
+Or if you already cloned the repo:
+
+```bash
+cd ~/control-center
+./install.sh
+```
+
+The rest of this guide covers manual setup or explains what the installer does.
 
 ---
 
 ## Prerequisites
 
-```bash
-# Node.js 22+ via nvm (recommended)
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
-nvm install 22 && nvm use 22
+| Tool | Version | Purpose |
+|------|---------|---------|
+| Claude Code | any | The CLI tool this dashboard monitors ([install](https://docs.anthropic.com/en/docs/claude-code/overview)) |
+| Node.js | 20+ | Server runtime |
+| tmux | any | Terminal multiplexer for session management |
+| jq | any | JSON processing in hook scripts |
+| curl | any | HTTP requests in hook scripts |
+| build-essential / Xcode CLI | -- | Compiling the `node-pty` native module |
+| python3 | any | Required by `node-gyp` for native module compilation |
+| git | any | Cloning the repository |
 
-# System dependencies (Ubuntu/Debian/WSL)
+### Linux / WSL2
+
+```bash
+# System packages
 sudo apt install -y tmux jq curl build-essential python3
 
-# Verify
-node --version   # v22.x.x
-tmux -V          # tmux 3.x
+# Node.js via nvm (recommended)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
+source ~/.bashrc
+nvm install 22 && nvm use 22
 ```
 
----
-
-## 1. Clone and install
+### macOS
 
 ```bash
-git clone https://github.com/charan1319/control-center.git ~/Charan/control-center
-cd ~/Charan/control-center
-npm install          # compiles node-pty native module — needs build-essential
-npm test             # all 84 tests should pass
+# Xcode Command Line Tools (required for native compilation)
+xcode-select --install
+
+# System packages via Homebrew
+brew install tmux jq curl
+
+# Node.js via nvm (recommended)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
+source ~/.zshrc
+nvm install 22 && nvm use 22
+```
+
+### Verify
+
+```bash
+node --version   # v20.x.x or v22.x.x
+tmux -V          # tmux 3.x
+jq --version     # jq-1.x
 ```
 
 ---
 
-## 2. Configure environment
+## 1. Clone and Install
+
+```bash
+git clone https://github.com/charan1319/control-center.git ~/control-center
+cd ~/control-center
+npm install          # compiles node-pty — requires build-essential/Xcode CLI
+npm test             # all tests should pass
+```
+
+---
+
+## 2. Configure Environment (.env)
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` with your settings. The key variables:
 
-```env
-CC_PORT=7700
-CC_HOST=0.0.0.0
-CC_DB_PATH=./data/control-center.sqlite
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CC_PORT` | `7700` | Server port |
+| `CC_HOST` | `0.0.0.0` | Bind address |
+| `CC_DB_PATH` | `./data/control-center.sqlite` | SQLite database path |
+| `DEEPSEEK_API_KEY` | _(empty)_ | DeepSeek API key for AI session summaries |
+| `CC_AI_SUMMARY` | `true` | Set `false` to disable AI summaries |
+| `CC_AUTO_APPROVE_TOOLS` | `Read,Glob,Grep,WebFetch,WebSearch,LS` | Tools auto-approved without prompting |
+| `CC_SESSION_CLEANUP_DAYS` | `7` | Auto-delete stopped sessions after N days (0 = disabled) |
 
-# Push notifications (optional — leave empty to disable)
-OPENCLAW_BIN=/home/zapperz/.nvm/versions/node/v22.22.1/bin/openclaw
-TELEGRAM_CHAT_ID=8778592568
+For web push notifications (requires HTTPS via Tailscale Serve):
 
-# AI summaries (optional — set CC_AI_SUMMARY=true to enable)
-DEEPSEEK_API_KEY=sk-...
-CC_AI_SUMMARY=false
-
-# Auto-approve permissions (comma-separated tool names)
-CC_AUTO_APPROVE_TOOLS=Read,Glob,Grep,WebFetch,WebSearch,LS
+```bash
+# Generate VAPID keys once
+npx web-push generate-vapid-keys
 ```
+
+Then add to `.env`:
+```env
+VAPID_PUBLIC_KEY=<your public key>
+VAPID_PRIVATE_KEY=<your private key>
+VAPID_EMAIL=mailto:you@example.com
+```
+
+See `.env.example` for the full list of options with comments.
 
 ---
 
-## 3. Create project presets
+## 3. Project Presets (optional)
 
-`data/projects.json` is gitignored (machine-local). Create it:
+Create `data/projects.json` to populate the "New Session" dropdown with your project directories:
 
 ```bash
 mkdir -p data
 cat > data/projects.json << 'EOF'
 [
-  { "name": "Deep Discovery",  "cwd": "/home/zapperz/Charan/deep-discovery" },
-  { "name": "Stim Analysis",   "cwd": "/home/zapperz/lab3/scripts/stim_expt_analysis" },
-  { "name": "Control Center",  "cwd": "/home/zapperz/Charan/control-center" }
+  { "name": "My App",        "cwd": "/home/user/projects/my-app" },
+  { "name": "Backend API",   "cwd": "/home/user/projects/backend" },
+  { "name": "Control Center", "cwd": "/home/user/control-center" }
 ]
 EOF
 ```
 
+This file is gitignored (machine-local). Adjust paths to match your system.
+
 ---
 
-## 4. Install Claude Code hooks
+## 4. Install Claude Code Hooks
 
-The hook scripts need to be deployed to `~/.claude/hooks/` and registered in `~/.claude/settings.json`.
-The install script handles this:
+Hook scripts report session events to the Control Center server.
+
+**Automated (recommended):** The installer handles this. Run `./install.sh` if you haven't already.
+
+**Manual:**
 
 ```bash
-./install.sh
-```
-
-Or manually:
-```bash
+# Deploy hook scripts
 mkdir -p ~/.claude/hooks
 cp hooks/cc-report.sh ~/.claude/hooks/cc-report.sh
 cp hooks/cc-heartbeat.sh ~/.claude/hooks/cc-heartbeat.sh
@@ -95,6 +157,7 @@ chmod +x ~/.claude/hooks/cc-report.sh ~/.claude/hooks/cc-heartbeat.sh
 ```
 
 Then add to `~/.claude/settings.json` under `"hooks"`:
+
 ```json
 {
   "hooks": {
@@ -102,69 +165,45 @@ Then add to `~/.claude/settings.json` under `"hooks"`:
     "Stop":              [{ "hooks": [{ "type": "command", "command": "~/.claude/hooks/cc-report.sh" }] }],
     "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "~/.claude/hooks/cc-report.sh" }] }],
     "Notification":      [{ "hooks": [{ "type": "command", "command": "~/.claude/hooks/cc-report.sh" }] }],
-    "PostToolUse":       [{ "matcher": "Bash|Write|Edit|MultiEdit", "hooks": [{ "type": "command", "command": "~/.claude/hooks/cc-heartbeat.sh" }] }]
+    "PostToolUse":       [{ "matcher": "Bash|Write|Edit|MultiEdit", "hooks": [{ "type": "command", "command": "~/.claude/hooks/cc-heartbeat.sh", "timeout": 5 }] }]
   }
 }
 ```
 
----
-
-## 5. Start the server
+**Non-default port:** If you changed `CC_PORT` in `.env`, add this to your shell profile (`~/.bashrc` or `~/.zshrc`) so hook scripts reach the server:
 
 ```bash
-# Start in a dedicated tmux pane so it persists
-tmux new-session -d -s cc-server -c ~/Charan/control-center 'npm start; exec bash'
-
-# Verify it's running
-curl -s http://localhost:7700/api/sessions | head -c 100
+export CC_SERVER_URL=http://127.0.0.1:YOUR_PORT
 ```
 
-Open `http://localhost:7700` in a browser.
-
 ---
 
-## 6. Verify end-to-end
+## 5. Start the Server
 
-1. Open the dashboard — connection dot should be green
-2. Open a new terminal and run `claude` in any project directory
-3. The session should appear as a card within a few seconds
-4. Open the terminal panel — it should connect to the tmux pane
-5. Run a tool — the heartbeat should update the card status
-
----
-
-## 7. Remote access via Tailscale
+### Manual start (in tmux)
 
 ```bash
-# Install Tailscale (if not already)
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-
-# Get your Tailscale IP
-tailscale ip -4
+cd ~/control-center
+tmux new-session -d -s cc-server 'npm start; exec bash'
 ```
 
-Then access `http://<tailscale-ip>:7700` from any device on your Tailscale network.
-On phone: install the Tailscale app (iOS/Android), sign in with the same account.
-
----
-
-## 8. Auto-start on login (systemd)
+### Auto-start with systemd (Linux / WSL2)
 
 ```bash
 mkdir -p ~/.config/systemd/user
 
 cat > ~/.config/systemd/user/control-center.service << EOF
 [Unit]
-Description=Control Center Dashboard
+Description=Control Center -- Claude Code dashboard
 After=network.target
 
 [Service]
-WorkingDirectory=/home/zapperz/Charan/control-center
-ExecStart=/home/zapperz/.nvm/versions/node/v22.22.1/bin/node --env-file=.env server.js
+Type=simple
+WorkingDirectory=$HOME/control-center
+ExecStart=$(command -v node) --env-file-if-exists=.env server.js
 Restart=on-failure
-RestartSec=5
-Environment=PATH=/home/zapperz/.nvm/versions/node/v22.22.1/bin:/usr/local/bin:/usr/bin:/bin
+RestartSec=5s
+Environment=HOME=$HOME
 
 [Install]
 WantedBy=default.target
@@ -175,84 +214,178 @@ systemctl --user enable --now control-center.service
 systemctl --user status control-center.service
 ```
 
-## 9. Prevent Windows from sleeping
+### Auto-start with launchd (macOS)
 
-Run this once from WSL to disable system sleep and hibernate on both AC and battery:
+The installer generates `~/Library/LaunchAgents/com.control-center.plist` automatically.
+To manage it manually:
 
 ```bash
-powershell.exe -Command "
-  powercfg /change standby-timeout-ac 0
-  powercfg /change standby-timeout-dc 0
-  powercfg /change hibernate-timeout-ac 0
-  powercfg /change hibernate-timeout-dc 0
-"
-```
+# Load (start)
+launchctl load ~/Library/LaunchAgents/com.control-center.plist
 
-This persists across reboots (Windows power plan setting).
-To re-enable sleep later: replace `0` with a timeout in minutes (e.g. `30`).
+# Unload (stop)
+launchctl unload ~/Library/LaunchAgents/com.control-center.plist
+
+# View logs
+tail -f ~/.control-center.log
+```
 
 ---
 
-## 10. Windows auto-start on reboot (no login required)
-
-Two pieces: a Windows auto-login so the machine logs in unattended, and a Startup folder
-script that silently starts WSL and all services.
-
-**Step 1 — Enable Windows auto-login (one-time, on the PC):**
-1. Press Win+R → type `netplwiz` → Enter
-2. Select your user → uncheck "Users must enter a username and password"
-3. Click OK → enter your Windows password → OK
-
-**Step 2 — The startup script** is already installed at:
-`C:\Users\zapperz\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\wsl-services.vbs`
-
-It silently runs `wsl.exe` at login, which starts WSL and triggers all enabled systemd user
-services (control-center + openclaw-gateway) via `~/.config/wsl-startup.sh`.
-
-**Full restart flow:**
-```
-PC powers on → Windows auto-login → Startup script fires → WSL starts →
-20s settle → control-center.service up → openclaw-gateway.service up → done
-```
-
-**To disable auto-login later:** Win+R → `netplwiz` → recheck the password checkbox.
-
-## 9. Daily GitHub backup (systemd timer)
-
-A systemd timer pushes all three repos to GitHub at 6am daily:
+## 6. Verify End-to-End
 
 ```bash
-# Timer files are at:
-~/.config/systemd/user/morning-git-push.service
-~/.config/systemd/user/morning-git-push.timer
+# 1. Check the server is responding
+curl -s http://localhost:7700/api/info
 
-# Push script:
-~/bin/cc-morning-push.sh
+# 2. Open the dashboard in your browser
+#    http://localhost:7700
 
-# Check status:
-systemctl --user status morning-git-push.timer
-systemctl --user list-timers
+# 3. Start a Claude Code session in any project directory
+#    The session should appear on the dashboard within seconds
+
+# 4. Click "Terminal" on a session card to connect to the tmux pane
+
+# 5. Run a tool in Claude — the heartbeat should update the card status
 ```
+
+---
+
+## 7. Remote Access via Tailscale
+
+Tailscale creates a private network so you can access the dashboard from any device.
+
+```bash
+# Install Tailscale
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+
+# Get your Tailscale IP
+tailscale ip -4
+```
+
+Access from any device on your Tailscale network:
+- Browser: `http://<tailscale-ip>:7700`
+- Phone: Install the Tailscale app (iOS/Android), sign in with the same account
+
+For HTTPS (required for web push notifications), use [Tailscale Serve](https://tailscale.com/kb/1242/tailscale-serve):
+
+```bash
+tailscale serve --bg 7700
+```
+
+---
+
+## 8. Phone App (PWA)
+
+Control Center works as a Progressive Web App — you can install it on your phone's home screen for an app-like experience with no browser chrome.
+
+**On your phone:**
+1. Set up Tailscale (see above) so your phone can reach the server
+2. Open `http://<tailscale-ip>:7700` in your phone's browser
+3. **iOS Safari:** Tap the share button → "Add to Home Screen"
+4. **Android Chrome:** Tap the three-dot menu → "Add to Home screen" (or "Install app")
+
+The dashboard is optimized for mobile with touch-friendly buttons and an input bar for typing commands.
+
+---
+
+## 9. Push Notifications
+
+Get notified on your phone when a session needs permission approval.
+
+**Requirements:** HTTPS (needed for browser push) — use Tailscale Serve:
+```bash
+tailscale serve --bg 7700
+```
+
+**Setup:**
+1. Generate VAPID keys:
+   ```bash
+   cd ~/control-center
+   npx web-push generate-vapid-keys
+   ```
+2. Add the keys to `.env`:
+   ```env
+   VAPID_PUBLIC_KEY=<your public key>
+   VAPID_PRIVATE_KEY=<your private key>
+   VAPID_EMAIL=mailto:you@example.com
+   ```
+3. Restart the server: `systemctl --user restart control-center`
+4. Open the dashboard via HTTPS (`https://<tailscale-hostname>`)
+5. Click the bell icon in the header to enable notifications
+6. Allow notifications when your browser prompts
+
+You'll now get push notifications when any session needs permission approval.
 
 ---
 
 ## Troubleshooting
 
-**Sessions not appearing in dashboard**
-- Check hooks are installed: `ls ~/.claude/hooks/`
-- Check hook is registered: `cat ~/.claude/settings.json | grep cc-report`
-- Test the hook manually: `echo '{"hook_event_name":"SessionStart","session_id":"test-123","cwd":"/tmp"}' | ~/.claude/hooks/cc-report.sh`
-- Check server is running: `curl http://localhost:7700/api/sessions`
+### Sessions not appearing on the dashboard
 
-**Terminal won't connect**
-- Session needs a tmux target linked — click "Link tmux" on the card
-- Check tmux session exists: `tmux ls`
-- Auto-linking fires on SessionStart; start a fresh `claude` session to trigger it
+1. Check hooks are installed:
+   ```bash
+   ls ~/.claude/hooks/
+   ```
+2. Check hooks are registered:
+   ```bash
+   cat ~/.claude/settings.json | python3 -m json.tool | grep cc-report
+   ```
+3. Test a hook manually:
+   ```bash
+   echo '{"hook_event_name":"SessionStart","session_id":"test-123","cwd":"/tmp"}' | ~/.claude/hooks/cc-report.sh
+   ```
+4. Check the server is running:
+   ```bash
+   curl http://localhost:7700/api/sessions
+   ```
 
-**node-pty compile error**
-- Ensure build tools are installed: `sudo apt install -y build-essential python3`
-- Try: `npm rebuild node-pty`
+### Terminal won't connect
 
-**Port already in use**
-- Check what's on 7700: `ss -tlnp | grep 7700`
-- Change port in `.env`: `CC_PORT=7800`
+- The session needs a tmux target linked. Click "Link tmux" on the session card.
+- Check tmux sessions exist: `tmux ls`
+- Auto-linking happens on SessionStart. Start a fresh `claude` session to trigger it.
+
+### node-pty compilation error
+
+- Linux: `sudo apt install -y build-essential python3`
+- macOS: `xcode-select --install`
+- Then: `npm rebuild node-pty`
+
+### Port already in use
+
+```bash
+# Check what's using the port
+ss -tlnp | grep 7700    # Linux
+lsof -i :7700           # macOS
+
+# Change port in .env
+# CC_PORT=7800
+# Don't forget to also set CC_SERVER_URL in your shell profile
+```
+
+### Service won't start (systemd)
+
+```bash
+# Check status and logs
+systemctl --user status control-center.service
+journalctl --user -u control-center.service -f
+
+# Restart
+systemctl --user restart control-center.service
+```
+
+### WSL-specific: systemd not available
+
+If `systemctl` is not available in your WSL distribution, enable systemd:
+
+```bash
+# Add to /etc/wsl.conf
+sudo tee -a /etc/wsl.conf << 'EOF'
+[boot]
+systemd=true
+EOF
+```
+
+Then restart WSL from PowerShell: `wsl --shutdown` and reopen your terminal.

@@ -10,8 +10,6 @@ import { tmpdir } from 'node:os';
 const tmpDir = mkdtempSync(join(tmpdir(), 'cc-integration-'));
 process.env.CC_DB_PATH = join(tmpDir, 'test.sqlite');
 process.env.CC_PORT = '0';
-process.env.OPENCLAW_TOKEN = '';
-
 const { buildServer } = await import('../server.js');
 
 let app;

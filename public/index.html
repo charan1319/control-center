@@ -23,7 +23,7 @@
 </head>
 <body>
   <header id="header">
-    <h1>⌘ Control Center</h1>
+    <h1><span>&#x2318;</span> Control Center</h1>
     <div id="header-actions">
       <span id="connection-status" class="status-dot disconnected" title="WebSocket disconnected"></span>
       <button id="btn-notifications" title="Enable push notifications" class="btn-notif" aria-label="Notifications">🔔</button>
@@ -31,6 +31,11 @@
       <button id="btn-new-session" title="Launch new Claude Code session">+ New Session</button>
     </div>
   </header>
+
+  <div id="connection-banner">
+    <div class="banner-spinner"></div>
+    <span>Connection lost — reconnecting...</span>
+  </div>
 
   <main id="main-layout">
     <section id="sessions-panel">
@@ -158,6 +163,8 @@
       <button type="button" id="btn-cancel-link">Cancel</button>
     </div>
   </dialog>
+
+  <div id="toast-container"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>

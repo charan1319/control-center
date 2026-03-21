@@ -8,8 +8,6 @@ import { tmpdir } from 'node:os';
 const tmpDir = mkdtempSync(join(tmpdir(), 'cc-api-test-'));
 process.env.CC_DB_PATH = join(tmpDir, 'test.sqlite');
 process.env.CC_PORT = '0';           // won't actually listen
-process.env.OPENCLAW_TOKEN = '';      // disable notifications in tests
-
 const { buildServer } = await import('../server.js');
 
 let app;
