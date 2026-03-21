@@ -38,6 +38,31 @@
   gap: 12px;
 }
 
+.btn-history {
+  padding: 8px 14px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--ctp-surface1);
+  background: var(--ctp-surface0);
+  color: var(--ctp-subtext0);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-history:hover {
+  border-color: var(--ctp-overlay0);
+  color: var(--ctp-text);
+}
+
+.btn-history:active {
+  opacity: 0.75;
+  transform: scale(0.96);
+}
+
 .btn-new-session {
   padding: 8px 14px;
   min-height: 44px;
@@ -213,6 +238,11 @@
   .header-stats {
     display: flex;
     gap: 6px;
+  }
+
+  .btn-history {
+    min-height: unset;
+    padding: 6px 14px;
   }
 
   .btn-new-session {

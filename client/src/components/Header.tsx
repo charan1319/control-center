@@ -8,12 +8,13 @@ import './Header.css';
 
 interface HeaderProps {
   onNewSession: () => void;
+  onHistoryOpen: () => void;
 }
 
 const fetchStats = () => api.getStats();
 const fetchVersion = () => api.getVersion();
 
-export function Header({ onNewSession }: HeaderProps) {
+export function Header({ onNewSession, onHistoryOpen }: HeaderProps) {
   const { connectionStatus } = useWebSocket();
   const { sessions, activeCount, waitingCount, idleCount } = useSessions();
 
@@ -59,6 +60,9 @@ export function Header({ onNewSession }: HeaderProps) {
         />
       </div>
       <div className="header-right">
+        <button className="btn-history" onClick={onHistoryOpen}>
+          History
+        </button>
         <button className="btn-new-session" onClick={onNewSession}>
           + New Session
         </button>

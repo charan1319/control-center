@@ -5,6 +5,7 @@ import { api } from '../api';
 import { Header } from './Header';
 import { SessionList } from './SessionList';
 import { EventLog } from './EventLog';
+import { HistoryView } from './HistoryView';
 import { NewSessionModal } from './modals/NewSessionModal';
 import { SessionDetail } from './SessionDetail';
 import type { ServerInfo } from '../types';
@@ -21,6 +22,7 @@ const fetchInfo = () => api.getInfo();
 export function Layout({ selectedSessionId, onSelectSession, onCloseDetail }: LayoutProps) {
   const { sessions, recentEvents } = useWebSocket();
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const { data: serverInfo } = useApi<ServerInfo>(fetchInfo);
 
@@ -35,36 +37,58 @@ export function Layout({ selectedSessionId, onSelectSession, onCloseDetail }: La
     [sessions, selectedSessionId]
   );
 
-  // Escape closes detail panel (but not if a modal is open)
+  // Escape closes detail panel or history (but not if a modal is open)
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape' && selectedSessionId && !newSessionOpen) {
-        onCloseDetail();
+      if (e.key === 'Escape' && !newSessionOpen) {
+        if (selectedSessionId) {
+          onCloseDetail();
+        } else if (historyOpen) {
+          setHistoryOpen(false);
+        }
       }
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedSessionId, onCloseDetail, newSessionOpen]);
+  }, [selectedSessionId, onCloseDetail, newSessionOpen, historyOpen]);
 
   const handleNewSession = useCallback(() => {
     setNewSessionOpen(true);
   }, []);
 
+  const handleHistoryOpen = useCallback(() => {
+    setHistoryOpen(true);
+  }, []);
+
+  const handleHistorySelect = useCallback((id: string) => {
+    setHistoryOpen(false);
+    onSelectSession(id);
+  }, [onSelectSession]);
+
   return (
     <div className="layout">
-      <Header onNewSession={handleNewSession} />
+      <Header onNewSession={handleNewSession} onHistoryOpen={handleHistoryOpen} />
 
       <div className="layout-main">
         <div className={`layout-left${selectedSessionId ? ' has-selection' : ''}`}>
-          <SessionList
-            selectedSessionId={selectedSessionId}
-            onSelectSession={onSelectSession}
-            serverInfo={resolvedServerInfo}
-          />
-          <EventLog
-            recentEvents={recentEvents}
-            onSelectSession={onSelectSession}
-          />
+          {historyOpen ? (
+            <HistoryView
+              onClose={() => setHistoryOpen(false)}
+              onSelectSession={handleHistorySelect}
+            />
+          ) : (
+            <>
+              <SessionList
+                selectedSessionId={selectedSessionId}
+                onSelectSession={onSelectSession}
+                serverInfo={resolvedServerInfo}
+              />
+              <EventLog
+                recentEvents={recentEvents}
+                onSelectSession={onSelectSession}
+              />
+            </>
+          )}
         </div>
 
         {selectedSessionId && selectedSession && (
