@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { projectColor } from '../utils';
 import { SessionCard } from './SessionCard';
 import { PulsePanel } from './PulsePanel';
+import { TodoSection } from './TodoSection';
 import type { Session, SessionEvent, ServerInfo } from '../types';
 import './ProjectGroup.css';
 
@@ -41,6 +42,7 @@ export function ProjectGroup({
           </button>
         </div>
       )}
+      {projectName && <TodoSection project={projectName} />}
       <div className="project-sessions">
         {sessions.map(s => (
           <SessionCard

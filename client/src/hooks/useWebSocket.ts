@@ -2,6 +2,11 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, ty
 import React from 'react';
 import type { Session, SessionEvent, TranscriptEntry, WSIncoming, WSOutgoing } from '../types';
 
+export interface TodoStopEvent {
+  todo_id: number;
+  session_id: string;
+}
+
 interface WebSocketState {
   sessions: Session[];
   recentEvents: SessionEvent[];
@@ -9,6 +14,8 @@ interface WebSocketState {
   sendMessage: (msg: WSOutgoing) => void;
   transcriptVersion: number;
   getTranscriptUpdates: (sessionId: string) => TranscriptEntry[][];
+  todoStopVersion: number;
+  getTodoStopEvents: () => TodoStopEvent[];
 }
 
 const WebSocketContext = createContext<WebSocketState | null>(null);
@@ -24,16 +31,24 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [recentEvents, setRecentEvents] = useState<SessionEvent[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'reconnecting' | 'disconnected'>('connecting');
   const [transcriptVersion, setTranscriptVersion] = useState(0);
+  const [todoStopVersion, setTodoStopVersion] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectDelay = useRef(1000);
   const wasConnected = useRef(false);
   const transcriptUpdates = useRef(new Map<string, TranscriptEntry[][]>());
+  const todoStopEvents = useRef<TodoStopEvent[]>([]);
 
   const getTranscriptUpdates = useCallback((sessionId: string): TranscriptEntry[][] => {
     const updates = transcriptUpdates.current.get(sessionId) || [];
     transcriptUpdates.current.delete(sessionId);
     return updates;
+  }, []);
+
+  const getTodoStopEvents = useCallback((): TodoStopEvent[] => {
+    const events = todoStopEvents.current;
+    todoStopEvents.current = [];
+    return events;
   }, []);
 
   const sendMessage = useCallback((msg: WSOutgoing) => {
@@ -114,6 +129,11 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
             setTranscriptVersion(v => v + 1);
             break;
           }
+
+          case 'todo_session_stopped':
+            todoStopEvents.current.push({ todo_id: msg.todo_id, session_id: msg.session_id });
+            setTodoStopVersion(v => v + 1);
+            break;
         }
       };
 
@@ -151,6 +171,8 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     sendMessage,
     transcriptVersion,
     getTranscriptUpdates,
+    todoStopVersion,
+    getTodoStopEvents,
   };
 
   return React.createElement(WebSocketContext.Provider, { value }, children);

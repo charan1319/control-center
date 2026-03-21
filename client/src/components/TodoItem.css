@@ -1,0 +1,254 @@
+/* ─── TodoItem: Mobile-first ─── */
+
+.todo-item {
+  display: flex;
+  flex-direction: column;
+  background: var(--ctp-surface0);
+  border-radius: 6px;
+  border-left: 3px solid var(--ctp-overlay0);
+  transition: border-color 0.2s;
+}
+
+.todo-item.status-in_progress {
+  border-left-color: var(--ctp-blue);
+}
+
+.todo-item.status-done {
+  border-left-color: var(--ctp-green);
+}
+
+.todo-item.status-pending {
+  border-left-color: var(--ctp-overlay0);
+}
+
+/* Row layout */
+.todo-item-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  min-height: 40px;
+}
+
+/* Status dot */
+.todo-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.todo-status-dot.pending {
+  background: var(--ctp-overlay0);
+}
+
+.todo-status-dot.in_progress {
+  background: var(--ctp-blue);
+  animation: todoPulse 1.5s infinite;
+}
+
+.todo-status-dot.done {
+  background: var(--ctp-green);
+}
+
+@keyframes todoPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--ctp-blue); }
+  50% { opacity: 0.6; box-shadow: 0 0 4px 1px var(--ctp-blue); }
+}
+
+/* Title */
+.todo-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--ctp-text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 0;
+}
+
+.todo-item.status-done .todo-title {
+  color: var(--ctp-overlay1);
+  text-decoration: line-through;
+}
+
+/* Action buttons */
+.todo-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.todo-actions button {
+  font-size: 11px;
+  padding: 4px 8px;
+  min-height: 32px;
+  min-width: 44px;
+  border-radius: 4px;
+  border: 1px solid var(--ctp-surface1);
+  background: var(--ctp-surface0);
+  color: var(--ctp-text);
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.1s;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.todo-actions .btn-todo-launch {
+  color: var(--ctp-blue);
+  border-color: var(--ctp-blue);
+}
+
+.todo-actions .btn-todo-done {
+  color: var(--ctp-green);
+  border-color: var(--ctp-green);
+}
+
+.todo-actions .btn-todo-delete {
+  color: var(--ctp-red);
+  border-color: var(--ctp-red);
+}
+
+/* Expanded details area */
+.todo-details-area {
+  padding: 0 10px 8px 26px;
+}
+
+.todo-details-textarea {
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 8px;
+  background: var(--ctp-mantle);
+  color: var(--ctp-text);
+  border: 1px solid var(--ctp-surface1);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.todo-details-textarea:focus {
+  outline: none;
+  border-color: var(--ctp-blue);
+}
+
+/* Launch confirmation popover */
+.todo-launch-popover {
+  padding: 8px 10px 10px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.todo-launch-popover label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ctp-subtext0);
+  cursor: pointer;
+}
+
+.todo-launch-popover input[type="checkbox"] {
+  accent-color: var(--ctp-blue);
+}
+
+.todo-launch-popover-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.todo-launch-popover-actions button {
+  font-size: 11px;
+  padding: 4px 10px;
+  min-height: 32px;
+  border-radius: 4px;
+  border: 1px solid var(--ctp-surface1);
+  background: var(--ctp-surface0);
+  color: var(--ctp-text);
+  cursor: pointer;
+  transition: background 0.15s;
+  touch-action: manipulation;
+}
+
+.todo-launch-popover-actions .btn-confirm-launch {
+  color: var(--ctp-base);
+  background: var(--ctp-blue);
+  border-color: var(--ctp-blue);
+  font-weight: 600;
+}
+
+/* Session-stopped prompt */
+.todo-stopped-prompt {
+  padding: 6px 10px 8px 26px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ctp-peach);
+}
+
+.todo-stopped-prompt button {
+  font-size: 11px;
+  padding: 3px 8px;
+  min-height: 28px;
+  border-radius: 4px;
+  border: 1px solid var(--ctp-surface1);
+  background: var(--ctp-surface0);
+  color: var(--ctp-text);
+  cursor: pointer;
+  transition: background 0.15s;
+  touch-action: manipulation;
+}
+
+.todo-stopped-prompt .btn-yes {
+  color: var(--ctp-green);
+  border-color: var(--ctp-green);
+}
+
+.todo-stopped-prompt .btn-no {
+  color: var(--ctp-overlay0);
+  border-color: var(--ctp-surface2);
+}
+
+/* ─── Mobile: 44px touch targets ─── */
+@media (max-width: 767px) {
+  .todo-actions button {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 6px 10px;
+  }
+
+  .todo-launch-popover-actions button {
+    min-height: 44px;
+  }
+
+  .todo-stopped-prompt button {
+    min-height: 44px;
+  }
+}
+
+/* ─── Tablet+ ─── */
+@media (min-width: 768px) {
+  .todo-actions button:hover {
+    background: var(--ctp-surface1);
+  }
+
+  .todo-actions .btn-todo-launch:hover {
+    background: rgba(137, 180, 250, 0.15);
+  }
+
+  .todo-actions .btn-todo-done:hover {
+    background: rgba(166, 227, 161, 0.15);
+  }
+
+  .todo-actions .btn-todo-delete:hover {
+    background: rgba(243, 139, 168, 0.15);
+  }
+
+  .todo-launch-popover-actions .btn-confirm-launch:hover {
+    opacity: 0.9;
+  }
+}
