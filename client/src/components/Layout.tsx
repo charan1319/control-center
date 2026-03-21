@@ -1,10 +1,12 @@
-import { useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useApi } from '../hooks/useApi';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { api } from '../api';
 import { Header } from './Header';
 import { SessionList } from './SessionList';
 import { EventLog } from './EventLog';
+import { NewSessionModal } from './modals/NewSessionModal';
+import { SessionDetail } from './SessionDetail';
 import type { ServerInfo } from '../types';
 import './Layout.css';
 
@@ -17,7 +19,8 @@ interface LayoutProps {
 const fetchInfo = () => api.getInfo();
 
 export function Layout({ selectedSessionId, onSelectSession, onCloseDetail }: LayoutProps) {
-  const { recentEvents } = useWebSocket();
+  const { sessions, recentEvents } = useWebSocket();
+  const [newSessionOpen, setNewSessionOpen] = useState(false);
 
   const { data: serverInfo } = useApi<ServerInfo>(fetchInfo);
 
@@ -26,19 +29,25 @@ export function Layout({ selectedSessionId, onSelectSession, onCloseDetail }: La
     [serverInfo]
   );
 
-  // Escape closes detail panel
+  // Find the selected session object
+  const selectedSession = useMemo(
+    () => selectedSessionId ? sessions.find(s => s.session_id === selectedSessionId) ?? null : null,
+    [sessions, selectedSessionId]
+  );
+
+  // Escape closes detail panel (but not if a modal is open)
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape' && selectedSessionId) {
+      if (e.key === 'Escape' && selectedSessionId && !newSessionOpen) {
         onCloseDetail();
       }
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedSessionId, onCloseDetail]);
+  }, [selectedSessionId, onCloseDetail, newSessionOpen]);
 
   const handleNewSession = useCallback(() => {
-    // New session modal will be wired in a later phase
+    setNewSessionOpen(true);
   }, []);
 
   return (
@@ -58,18 +67,13 @@ export function Layout({ selectedSessionId, onSelectSession, onCloseDetail }: La
           />
         </div>
 
-        {selectedSessionId && (
+        {selectedSessionId && selectedSession && (
           <div className="layout-right">
             <div className="detail-panel">
-              <div className="detail-header">
-                <span className="detail-title">Session Detail</span>
-                <button className="detail-close" onClick={onCloseDetail}>
-                  &times;
-                </button>
-              </div>
-              <div className="detail-placeholder">
-                <p>Terminal and session detail will be implemented in a later phase.</p>
-              </div>
+              <SessionDetail
+                session={selectedSession}
+                onClose={onCloseDetail}
+              />
             </div>
           </div>
         )}
@@ -79,6 +83,11 @@ export function Layout({ selectedSessionId, onSelectSession, onCloseDetail }: La
       {selectedSessionId && (
         <div className="layout-overlay" onClick={onCloseDetail} />
       )}
+
+      <NewSessionModal
+        isOpen={newSessionOpen}
+        onClose={() => setNewSessionOpen(false)}
+      />
     </div>
   );
 }

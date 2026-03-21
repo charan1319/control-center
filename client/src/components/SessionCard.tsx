@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { useApi } from '../hooks/useApi';
 import { api } from '../api';
 import {
@@ -6,6 +6,8 @@ import {
   formatToolDetail, timeAgo, escapeHtml,
 } from '../utils';
 import type { Session, SessionEvent, ServerInfo } from '../types';
+import { EditSessionModal } from './modals/EditSessionModal';
+import { LinkTmuxModal } from './modals/LinkTmuxModal';
 import './SessionCard.css';
 
 interface SessionCardProps {
@@ -17,6 +19,9 @@ interface SessionCardProps {
 }
 
 function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEvents }: SessionCardProps) {
+  const [editOpen, setEditOpen] = useState(false);
+  const [linkTmuxOpen, setLinkTmuxOpen] = useState(false);
+
   const statusClass = getStatusClass(session);
   const statusText = getStatusText(session);
   const isStopped = session.status === 'stopped';
@@ -86,12 +91,12 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
 
   const handleEdit = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    // Edit modal will be wired in a later phase
+    setEditOpen(true);
   }, []);
 
   const handleLinkTmux = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    // Link tmux modal will be wired in a later phase
+    setLinkTmuxOpen(true);
   }, []);
 
   return (
@@ -169,6 +174,21 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
           </button>
         )}
       </div>
+
+      {editOpen && (
+        <EditSessionModal
+          isOpen={editOpen}
+          onClose={() => setEditOpen(false)}
+          session={session}
+        />
+      )}
+      {linkTmuxOpen && (
+        <LinkTmuxModal
+          isOpen={linkTmuxOpen}
+          onClose={() => setLinkTmuxOpen(false)}
+          sessionId={session.session_id}
+        />
+      )}
     </div>
   );
 }

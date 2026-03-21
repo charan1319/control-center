@@ -1,0 +1,134 @@
+.session-detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--ctp-base);
+}
+
+/* ─── Header ─── */
+.sd-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--ctp-surface0);
+  border-bottom: 1px solid var(--ctp-surface1);
+  flex-shrink: 0;
+}
+
+.sd-label {
+  font-size: 14px;
+  font-weight: 600;
+  font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
+  color: var(--ctp-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.sd-status-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.sd-status-badge.active {
+  background: color-mix(in srgb, var(--ctp-green) 15%, transparent);
+  color: var(--ctp-green);
+  border: 1px solid color-mix(in srgb, var(--ctp-green) 30%, transparent);
+}
+
+.sd-status-badge.idle {
+  background: color-mix(in srgb, var(--ctp-yellow) 15%, transparent);
+  color: var(--ctp-yellow);
+  border: 1px solid color-mix(in srgb, var(--ctp-yellow) 30%, transparent);
+}
+
+.sd-status-badge.waiting {
+  background: color-mix(in srgb, var(--ctp-red) 15%, transparent);
+  color: var(--ctp-red);
+  border: 1px solid color-mix(in srgb, var(--ctp-red) 30%, transparent);
+  animation: sdBadgePulse 1.5s infinite;
+}
+
+.sd-status-badge.stopped {
+  background: color-mix(in srgb, var(--ctp-overlay0) 15%, transparent);
+  color: var(--ctp-overlay0);
+  border: 1px solid color-mix(in srgb, var(--ctp-overlay0) 30%, transparent);
+}
+
+@keyframes sdBadgePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.sd-close {
+  font-size: 20px;
+  line-height: 1;
+  padding: 4px 8px;
+  background: transparent;
+  border: none;
+  color: var(--ctp-overlay0);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sd-close:hover {
+  color: var(--ctp-text);
+}
+
+/* ─── Tab bar ─── */
+.sd-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--ctp-surface1);
+  background: var(--ctp-mantle);
+  flex-shrink: 0;
+}
+
+.sd-tab {
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ctp-overlay0);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.sd-tab:hover {
+  color: var(--ctp-subtext0);
+}
+
+.sd-tab.active {
+  color: var(--ctp-blue);
+  border-bottom-color: var(--ctp-blue);
+}
+
+/* ─── Content area ─── */
+.sd-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ─── Mobile adjustments ─── */
+@media (max-width: 640px) {
+  .sd-header {
+    padding: 8px 12px;
+  }
+
+  .sd-tab {
+    padding: 10px 16px;
+    min-height: 40px;
+  }
+}

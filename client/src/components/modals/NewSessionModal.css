@@ -1,0 +1,20 @@
+/* NewSessionModal-specific styles */
+
+.new-session-template-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.new-session-template-row .modal-field {
+  flex: 1;
+}
+
+.new-session-template-row .modal-btn {
+  margin-bottom: 14px;
+  white-space: nowrap;
+}
+
+.new-session-cwd-custom {
+  margin-top: 8px;
+}

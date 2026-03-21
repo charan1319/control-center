@@ -1,0 +1,108 @@
+.input-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--ctp-mantle);
+  border-top: 1px solid var(--ctp-surface1);
+  flex-shrink: 0;
+}
+
+.input-bar-textarea {
+  flex: 1;
+  min-height: 32px;
+  max-height: 80px;
+  padding: 6px 10px;
+  background: var(--ctp-surface0);
+  border: 1px solid var(--ctp-surface1);
+  border-radius: 8px;
+  color: var(--ctp-text);
+  font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  resize: none;
+  outline: none;
+  overflow-y: auto;
+}
+
+.input-bar-textarea:focus {
+  border-color: var(--ctp-blue);
+}
+
+.input-bar-textarea::placeholder {
+  color: var(--ctp-overlay0);
+}
+
+.input-bar-send {
+  padding: 6px 12px;
+  background: var(--ctp-blue);
+  color: var(--ctp-base);
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  min-height: 32px;
+  transition: opacity 0.15s;
+}
+
+.input-bar-send:hover {
+  opacity: 0.9;
+}
+
+.input-bar-send:active {
+  opacity: 0.7;
+  transform: scale(0.96);
+}
+
+/* Quick-action buttons row */
+.input-bar-quick {
+  display: flex;
+  gap: 4px;
+  padding: 4px 12px 6px;
+  background: var(--ctp-mantle);
+  flex-shrink: 0;
+}
+
+.input-bar-quick button {
+  padding: 4px 10px;
+  background: var(--ctp-surface0);
+  border: 1px solid var(--ctp-surface1);
+  border-radius: 6px;
+  color: var(--ctp-subtext0);
+  font-size: 11px;
+  font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s;
+  min-height: 30px;
+}
+
+.input-bar-quick button:hover {
+  background: var(--ctp-surface1);
+  color: var(--ctp-text);
+}
+
+.input-bar-quick button:active {
+  opacity: 0.7;
+  transform: scale(0.96);
+}
+
+@media (max-width: 640px) {
+  .input-bar {
+    padding: 6px 8px;
+  }
+
+  .input-bar-quick button {
+    min-height: 40px;
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  .input-bar-send {
+    min-height: 40px;
+    padding: 8px 14px;
+  }
+}

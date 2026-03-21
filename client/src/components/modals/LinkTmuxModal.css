@@ -1,0 +1,52 @@
+/* LinkTmuxModal-specific styles */
+
+.link-tmux-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.link-tmux-empty {
+  color: var(--ctp-overlay1);
+  font-size: 13px;
+  padding: 12px 0;
+}
+
+.link-tmux-loading {
+  color: var(--ctp-overlay1);
+  font-size: 13px;
+  padding: 12px 0;
+  text-align: center;
+}
+
+.link-tmux-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--ctp-mantle);
+  border: 1px solid var(--ctp-surface1);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.link-tmux-item:hover {
+  border-color: var(--ctp-blue);
+  background: var(--ctp-surface0);
+}
+
+.link-tmux-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ctp-text);
+}
+
+.link-tmux-cwd {
+  font-size: 12px;
+  color: var(--ctp-subtext0);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
