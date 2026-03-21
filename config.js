@@ -40,6 +40,9 @@ const config = {
   // Auto-approve Bash: commands matching this prefix pattern are silently approved
   autoApproveBashPattern: '^(ls|ll|find|tree|cat|head|tail|wc|grep|rg|python[0-9.]*|git\\s+(status|log|diff|show|branch|stash\\s+list|remote\\s+-v)|ps|df|du|free|uname|hostname|echo|pwd|which|date|printenv|env)(\\s|$)',
 
+  // Project Pulse — write pulse document into project directory
+  pulseWriteToProject: process.env.CC_PULSE_WRITE_TO_PROJECT === 'true',
+
   // Usage stats — disable with CC_TELEMETRY=false in .env
   telemetryEnabled: process.env.CC_TELEMETRY !== 'false',
   telemetryUrl: 'https://script.google.com/macros/s/AKfycbxn6CpA0OA04C095757DIkFhT13z5E4B0Eddhf44SdcmHdTwDE9RYrENUgj5PpJtETc/exec',

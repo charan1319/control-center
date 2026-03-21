@@ -31,6 +31,7 @@ try { db.exec(`ALTER TABLE sessions ADD COLUMN auto_approve INTEGER DEFAULT 1`);
 try { db.exec(`ALTER TABLE sessions ADD COLUMN pending_tool TEXT`); } catch { /* already exists */ }
 try { db.exec(`ALTER TABLE sessions ADD COLUMN pending_tool_input TEXT`); } catch { /* already exists */ }
 try { db.exec(`ALTER TABLE sessions ADD COLUMN snapshot_hash TEXT`); } catch { /* already exists */ }
+try { db.exec("ALTER TABLE sessions ADD COLUMN pulse_enabled INTEGER DEFAULT 1"); } catch { /* already exists */ }
 
 db.exec(`
 
@@ -137,6 +138,7 @@ const stmts = {
       tmux_target = COALESCE(@tmux_target, tmux_target),
       project = COALESCE(@project, project),
       auto_approve = COALESCE(@auto_approve, auto_approve),
+      pulse_enabled = COALESCE(@pulse_enabled, pulse_enabled),
       updated_at = datetime('now')
     WHERE session_id = @session_id
   `),
@@ -214,6 +216,23 @@ const stmts = {
      HAVING COUNT(DISTINCT fe.session_id) > 1`
   ),
 
+  getSessionsByProject: db.prepare(
+    `SELECT s.*, h.tool_name as last_tool, h.last_seen as last_heartbeat
+     FROM sessions s
+     LEFT JOIN heartbeats h ON h.session_id = s.session_id
+     WHERE s.project = @project
+     ORDER BY s.updated_at DESC`
+  ),
+  getRecentFileEditsByProject: db.prepare(
+    `SELECT fe.file_path, fe.session_id, fe.tool_name, fe.edited_at
+     FROM file_edits fe
+     JOIN sessions s ON s.session_id = fe.session_id
+     WHERE s.project = @project
+       AND fe.edited_at > datetime('now', '-' || @minutes || ' minutes')
+     ORDER BY fe.edited_at DESC
+     LIMIT 30`
+  ),
+
   updateSnapshotHash: db.prepare(
     'UPDATE sessions SET snapshot_hash = @hash WHERE session_id = @session_id'
   ),
@@ -289,13 +308,14 @@ export function updateStatus(session_id, status) {
   return stmts.updateStatus.run({ session_id, status });
 }
 
-export function updateSession(session_id, { label, tmux_target, project, auto_approve }) {
+export function updateSession(session_id, { label, tmux_target, project, auto_approve, pulse_enabled }) {
   return stmts.updateSession.run({
     session_id,
     label: label ?? null,
     tmux_target: tmux_target ?? null,
     project: project ?? null,
     auto_approve: auto_approve ?? null,
+    pulse_enabled: pulse_enabled ?? null,
   });
 }
 
@@ -331,6 +351,13 @@ export function getFilesBySession(session_id) {
 }
 export function getActiveFileConflicts(project) {
   return stmts.getActiveFileConflicts.all({ project });
+}
+
+export function getSessionsByProject(project) {
+  return stmts.getSessionsByProject.all({ project });
+}
+export function getRecentFileEditsByProject(project, minutes) {
+  return stmts.getRecentFileEditsByProject.all({ project, minutes: String(minutes) });
 }
 
 export function updateSnapshotHash(session_id, hash) {

@@ -521,3 +521,40 @@ describe('GET /api/sessions/history', () => {
     assert.ok(body.sessions.some(s => s.session_id === 'history-test-1'));
   });
 });
+
+describe('Project Pulse API', () => {
+  it('GET /api/projects/:name/pulse returns pulse document with markdown and userNotes', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/projects/test-project/pulse' });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.ok(typeof body.markdown === 'string');
+    assert.ok(body.markdown.includes('Project Pulse: test-project'));
+    assert.ok('userNotes' in body);
+  });
+
+  it('PUT /api/projects/:name/pulse/notes saves notes and returns ok', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/projects/test-project/pulse/notes',
+      payload: { notes: 'Focus on the auth module this sprint.' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json(), { ok: true });
+
+    // Verify notes are persisted
+    const pulseRes = await app.inject({ method: 'GET', url: '/api/projects/test-project/pulse' });
+    const pulse = pulseRes.json();
+    assert.equal(pulse.userNotes, 'Focus on the auth module this sprint.');
+    assert.ok(pulse.markdown.includes('Focus on the auth module this sprint.'));
+  });
+
+  it('GET /api/projects/:name/pulse/prompt returns compact text', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/projects/test-project/pulse/prompt' });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.ok(typeof body.text === 'string');
+    // The prompt text should not contain markdown headers (they are stripped)
+    assert.ok(!body.text.includes('# Project Pulse'));
+    assert.ok(!body.text.includes('## '));
+  });
+});
