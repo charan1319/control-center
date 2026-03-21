@@ -1,3 +1,5 @@
+/* ─── SessionDetail: Mobile-first ─── */
+
 .session-detail {
   display: flex;
   flex-direction: column;
@@ -10,7 +12,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 16px;
+  padding: 8px 12px;
   background: var(--ctp-surface0);
   border-bottom: 1px solid var(--ctp-surface1);
   flex-shrink: 0;
@@ -72,6 +74,11 @@
   font-size: 20px;
   line-height: 1;
   padding: 4px 8px;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   color: var(--ctp-overlay0);
@@ -92,7 +99,8 @@
 }
 
 .sd-tab {
-  padding: 8px 20px;
+  padding: 10px 16px;
+  min-height: 44px;
   font-size: 13px;
   font-weight: 500;
   color: var(--ctp-overlay0);
@@ -101,10 +109,8 @@
   border-bottom: 2px solid transparent;
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
-}
-
-.sd-tab:hover {
-  color: var(--ctp-subtext0);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .sd-tab.active {
@@ -121,14 +127,23 @@
   overflow: hidden;
 }
 
-/* ─── Mobile adjustments ─── */
-@media (max-width: 640px) {
+/* ─── Tablet+ ─── */
+@media (min-width: 768px) {
   .sd-header {
-    padding: 8px 12px;
+    padding: 10px 16px;
   }
 
   .sd-tab {
-    padding: 10px 16px;
-    min-height: 40px;
+    padding: 8px 20px;
+    min-height: unset;
+  }
+
+  .sd-tab:hover {
+    color: var(--ctp-subtext0);
+  }
+
+  .sd-close {
+    min-width: unset;
+    min-height: unset;
   }
 }

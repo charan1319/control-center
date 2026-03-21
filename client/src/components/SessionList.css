@@ -1,8 +1,11 @@
+/* ─── SessionList: Mobile-first ─── */
+
 .session-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px 20px;
+  -webkit-overflow-scrolling: touch;
+  padding: 10px 8px;
 }
 
 .sessions-grid {
@@ -18,33 +21,33 @@
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 60px 24px 40px;
+  padding: 40px 16px 30px;
   gap: 16px;
 }
 
 .empty-state-icon {
-  width: 64px;
-  height: 64px;
+  width: 52px;
+  height: 52px;
   border-radius: 16px;
   background: var(--ctp-surface0);
   border: 1px solid var(--ctp-surface1);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 28px;
+  font-size: 24px;
   color: var(--ctp-overlay0);
   margin-bottom: 4px;
 }
 
 .empty-state h3 {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--ctp-text);
   margin: 0;
 }
 
 .empty-state p {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--ctp-overlay0);
   max-width: 380px;
   line-height: 1.6;
@@ -78,6 +81,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  min-height: 44px;
 }
 
 .stopped-section > summary::-webkit-details-marker {
@@ -108,32 +112,36 @@
   border-color: var(--ctp-surface1);
 }
 
-/* Mobile */
-@media (max-width: 640px) {
+/* ─── Tablet+ ─── */
+@media (min-width: 768px) {
   .session-list {
-    padding: 10px 8px;
+    padding: 16px 20px;
   }
 
   .empty-state {
-    padding: 40px 16px 30px;
+    padding: 60px 24px 40px;
   }
 
   .empty-state-icon {
-    width: 52px;
-    height: 52px;
-    font-size: 24px;
+    width: 64px;
+    height: 64px;
+    font-size: 28px;
   }
 
   .empty-state h3 {
-    font-size: 16px;
+    font-size: 18px;
   }
 
   .empty-state p {
-    font-size: 13px;
+    font-size: 14px;
+  }
+
+  .stopped-section > summary {
+    min-height: unset;
   }
 }
 
-/* Desktop: session list becomes a scrollable column */
+/* ─── Desktop: session list is a scrollable column ─── */
 @media (min-width: 1200px) {
   .session-list {
     padding: 12px 16px;

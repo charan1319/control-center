@@ -1,3 +1,5 @@
+/* ─── Layout: Mobile-first ─── */
+
 .layout {
   display: flex;
   flex-direction: column;
@@ -19,15 +21,24 @@
   overflow: hidden;
 }
 
-/* Right panel (detail/terminal) */
+/* Right panel — conditionally rendered by React.
+   Mobile default: full-screen fixed overlay with slide-in animation. */
 .layout-right {
-  display: none;
+  display: flex;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 200;
+  animation: slideInFromRight 200ms ease;
 }
 
 .detail-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
+  width: 100%;
   background: var(--ctp-base);
 }
 
@@ -51,6 +62,11 @@
   font-size: 20px;
   line-height: 1;
   padding: 4px 8px;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   color: var(--ctp-overlay0);
@@ -71,53 +87,18 @@
   font-size: 14px;
 }
 
-/* Mobile overlay backdrop */
+/* Mobile: no backdrop needed (panel is full-screen) */
 .layout-overlay {
   display: none;
 }
 
-/* ─── Mobile (<768px): full-screen overlay for detail ─── */
-@media (max-width: 767px) {
+/* ─── Tablet (768px - 1199px): slide-over panel, 70% width ─── */
+@media (min-width: 768px) {
   .layout-right {
-    display: flex;
-    position: fixed;
-    top: 0;
-    left: 0;
+    left: auto;
     right: 0;
-    bottom: 0;
-    z-index: 200;
-    animation: slideInFromRight 0.25s ease;
-  }
-
-  .detail-panel {
-    width: 100%;
-  }
-
-  .layout-overlay {
-    display: none; /* overlay not needed since it's full-screen */
-  }
-}
-
-/* ─── Tablet (768px - 1199px): slide-over panel from right ─── */
-@media (min-width: 768px) and (max-width: 1199px) {
-  .layout-main {
-    position: relative;
-  }
-
-  .layout-right {
-    display: flex;
-    position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
     width: 70%;
-    z-index: 200;
     box-shadow: -4px 0 20px rgba(0, 0, 0, 0.4);
-    animation: slideInFromRight 0.25s ease;
-  }
-
-  .detail-panel {
-    width: 100%;
   }
 
   .layout-overlay {
@@ -129,7 +110,7 @@
     bottom: 0;
     z-index: 199;
     background: rgba(0, 0, 0, 0.4);
-    animation: fadeIn 0.25s ease;
+    animation: fadeIn 200ms ease;
   }
 }
 
@@ -160,22 +141,17 @@
     overflow: hidden;
   }
 
-  .layout-left.has-selection {
-    /* No visual change on desktop, always visible */
-  }
-
   .layout-right {
-    display: flex;
+    position: relative;
+    top: auto;
+    left: auto;
+    right: auto;
+    bottom: auto;
     flex: 1;
     min-width: 0;
-    position: relative;
     z-index: auto;
     animation: none;
     box-shadow: none;
-  }
-
-  .detail-panel {
-    width: 100%;
   }
 
   .layout-overlay {

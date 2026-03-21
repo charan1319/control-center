@@ -1,7 +1,10 @@
+/* ─── TranscriptView: Mobile-first ─── */
+
 .transcript-view {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 16px;
+  -webkit-overflow-scrolling: touch;
+  padding: 10px 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -60,7 +63,8 @@
   position: sticky;
   bottom: 8px;
   align-self: center;
-  padding: 6px 14px;
+  padding: 8px 16px;
+  min-height: 44px;
   border-radius: 16px;
   border: 1px solid var(--ctp-surface1);
   background: var(--ctp-surface0);
@@ -71,6 +75,8 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   transition: background 0.15s;
   z-index: 10;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .transcript-jump:hover {
@@ -112,6 +118,9 @@
   padding: 4px 8px;
   list-style: none;
   user-select: none;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
 }
 
 .tx-thinking > summary::-webkit-details-marker {
@@ -184,6 +193,7 @@
 .tx-tool > summary {
   cursor: pointer;
   padding: 6px 10px;
+  min-height: 44px;
   font-size: 12px;
   font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
   color: var(--ctp-subtext0);
@@ -310,4 +320,24 @@
   color: var(--ctp-red);
   font-size: 13px;
   text-align: center;
+}
+
+/* ─── Tablet+ ─── */
+@media (min-width: 768px) {
+  .transcript-view {
+    padding: 12px 16px;
+  }
+
+  .transcript-jump {
+    min-height: unset;
+    padding: 6px 14px;
+  }
+
+  .tx-thinking > summary {
+    min-height: unset;
+  }
+
+  .tx-tool > summary {
+    min-height: unset;
+  }
 }

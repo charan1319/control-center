@@ -40,6 +40,7 @@ html, body {
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
 }
 
 #root {
@@ -62,6 +63,7 @@ input, textarea, select {
   font-size: inherit;
 }
 
+/* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -78,4 +80,10 @@ input, textarea, select {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--ctp-surface2);
+}
+
+/* PWA standalone: avoid content being hidden behind notches/home indicator */
+@supports (padding: env(safe-area-inset-top)) {
+  .header { padding-top: max(8px, env(safe-area-inset-top)); }
+  .input-bar { padding-bottom: max(6px, env(safe-area-inset-bottom)); }
 }

@@ -1,4 +1,4 @@
-/* Shared modal styles */
+/* ─── Shared modal styles: Mobile-first ─── */
 
 .modal-overlay {
   position: fixed;
@@ -9,6 +9,7 @@
   justify-content: center;
   background: rgba(0, 0, 0, 0.6);
   animation: modal-fade-in 0.15s ease-out;
+  padding: 12px;
 }
 
 .modal-card {
@@ -17,7 +18,7 @@
   border-radius: 12px;
   width: 90vw;
   max-width: 500px;
-  max-height: 80vh;
+  max-height: 85vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -28,7 +29,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--ctp-surface1);
   flex-shrink: 0;
 }
@@ -46,9 +47,16 @@
   color: var(--ctp-overlay1);
   font-size: 22px;
   line-height: 1;
-  padding: 0 4px;
+  padding: 4px;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   transition: color 0.15s;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .modal-close:hover {
@@ -56,17 +64,18 @@
 }
 
 .modal-body {
-  padding: 20px;
+  padding: 16px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   flex: 1;
 }
 
 .modal-footer {
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 14px 20px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 14px 16px;
   border-top: 1px solid var(--ctp-surface1);
   flex-shrink: 0;
 }
@@ -95,12 +104,13 @@
 .modal-textarea,
 .modal-select {
   width: 100%;
-  padding: 8px 10px;
+  padding: 10px 12px;
+  min-height: 44px;
   background: var(--ctp-mantle);
   border: 1px solid var(--ctp-surface1);
   border-radius: 6px;
   color: var(--ctp-text);
-  font-size: 13px;
+  font-size: 14px;
   outline: none;
   transition: border-color 0.15s;
 }
@@ -134,12 +144,13 @@
   align-items: center;
   gap: 8px;
   margin-bottom: 14px;
+  min-height: 44px;
 }
 
 .modal-checkbox-row input[type="checkbox"] {
   accent-color: var(--ctp-blue);
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   cursor: pointer;
 }
 
@@ -152,13 +163,16 @@
 /* Buttons */
 
 .modal-btn {
-  padding: 8px 18px;
+  padding: 10px 18px;
+  min-height: 44px;
   border: none;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   transition: opacity 0.15s, background 0.15s;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .modal-btn:disabled {
@@ -187,27 +201,76 @@
 .modal-btn-small {
   padding: 5px 12px;
   font-size: 12px;
+  min-height: unset;
 }
 
 /* Two-col row */
 
 .modal-row {
   display: flex;
-  gap: 12px;
+  flex-direction: column;
+  gap: 0;
 }
 
 .modal-row > .modal-field {
   flex: 1;
 }
 
-/* Animations */
+/* ─── Tablet+ ─── */
+@media (min-width: 768px) {
+  .modal-overlay {
+    padding: 24px;
+  }
 
-@keyframes modal-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
+  .modal-card {
+    max-height: 80vh;
+  }
 
-@keyframes modal-slide-in {
-  from { opacity: 0; transform: translateY(-10px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  .modal-header {
+    padding: 16px 20px;
+  }
+
+  .modal-body {
+    padding: 20px;
+  }
+
+  .modal-footer {
+    flex-direction: row;
+    justify-content: flex-end;
+    padding: 14px 20px;
+  }
+
+  .modal-close {
+    min-width: unset;
+    min-height: unset;
+    padding: 0 4px;
+  }
+
+  .modal-input,
+  .modal-textarea,
+  .modal-select {
+    padding: 8px 10px;
+    min-height: unset;
+    font-size: 13px;
+  }
+
+  .modal-btn {
+    padding: 8px 18px;
+    min-height: unset;
+    font-size: 13px;
+  }
+
+  .modal-checkbox-row {
+    min-height: unset;
+  }
+
+  .modal-checkbox-row input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+  }
+
+  .modal-row {
+    flex-direction: row;
+    gap: 12px;
+  }
 }

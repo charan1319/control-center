@@ -1,3 +1,5 @@
+/* ─── TerminalView: Mobile-first ─── */
+
 .terminal-view {
   flex: 1;
   display: flex;
@@ -6,11 +8,13 @@
   position: relative;
 }
 
+/* On mobile, terminal gets 55dvh */
 .terminal-container {
   flex: 1;
-  min-height: 0;
+  min-height: 55dvh;
   overflow: hidden;
   padding: 4px;
+  touch-action: none;
 }
 
 .terminal-container .xterm {
@@ -49,4 +53,11 @@
   font-size: 13px;
   padding: 16px;
   text-align: center;
+}
+
+/* ─── Tablet+: terminal fills flex space ─── */
+@media (min-width: 768px) {
+  .terminal-container {
+    min-height: 0;
+  }
 }
