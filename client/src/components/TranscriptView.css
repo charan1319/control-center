@@ -116,7 +116,7 @@
   letter-spacing: 0.03em;
 }
 
-/* Queued/pending user message — shown immediately on send before transcript confirms */
+/* Queued/pending user message — shown while send is in-flight */
 .tx-user.tx-queued {
   opacity: 0.6;
   border-style: dashed;

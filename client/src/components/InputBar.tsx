@@ -6,10 +6,10 @@ interface InputBarProps {
   sessionId: string;
   mode: 'transcript' | 'terminal';
   terminalWs?: WebSocket | null;
-  onMessageSent?: (text: string) => void;
+  onSendMessage?: (text: string) => void;
 }
 
-export function InputBar({ sessionId, mode, terminalWs, onMessageSent }: InputBarProps) {
+export function InputBar({ sessionId, mode, terminalWs, onSendMessage }: InputBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [value, setValue] = useState('');
 
@@ -29,14 +29,6 @@ export function InputBar({ sessionId, mode, terminalWs, onMessageSent }: InputBa
     ta.style.height = Math.min(ta.scrollHeight, 80) + 'px';
   }, []);
 
-  const sendText = useCallback((text: string) => {
-    if (mode === 'terminal' && terminalWs && terminalWs.readyState === WebSocket.OPEN) {
-      terminalWs.send(JSON.stringify({ type: 'input', data: text + '\n' }));
-    } else if (mode === 'transcript') {
-      api.sendInput(sessionId, text).catch(() => {});
-    }
-  }, [mode, terminalWs, sessionId]);
-
   const sendRaw = useCallback((data: string) => {
     if (mode === 'terminal' && terminalWs && terminalWs.readyState === WebSocket.OPEN) {
       terminalWs.send(JSON.stringify({ type: 'input', data }));
@@ -48,14 +40,17 @@ export function InputBar({ sessionId, mode, terminalWs, onMessageSent }: InputBa
   const handleSend = useCallback(() => {
     const text = value.trim();
     if (!text) return;
-    sendText(text);
-    if (mode === 'transcript' && onMessageSent) onMessageSent(text);
+    if (mode === 'terminal' && terminalWs && terminalWs.readyState === WebSocket.OPEN) {
+      terminalWs.send(JSON.stringify({ type: 'input', data: text + '\n' }));
+    } else if (mode === 'transcript' && onSendMessage) {
+      onSendMessage(text);
+    }
     setValue('');
     // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [value, sendText, mode, onMessageSent]);
+  }, [value, mode, terminalWs, onSendMessage]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {

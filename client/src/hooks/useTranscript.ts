@@ -8,6 +8,7 @@ export function useTranscript(sessionId: string | null) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
+  const [turnComplete, setTurnComplete] = useState(true);
   const { sendMessage, connectionStatus, transcriptVersion, getTranscriptUpdates } = useWebSocket();
 
   // Fetch transcript via HTTP — independent of WebSocket status
@@ -15,6 +16,7 @@ export function useTranscript(sessionId: string | null) {
     if (!sessionId) {
       setEntries([]);
       setError(null);
+      setTurnComplete(true);
       return;
     }
 
@@ -22,6 +24,7 @@ export function useTranscript(sessionId: string | null) {
     setEntries([]);
     setError(null);
     setLoading(true);
+    setTurnComplete(true);
 
     let cancelled = false;
 
@@ -30,6 +33,8 @@ export function useTranscript(sessionId: string | null) {
         if (cancelled) return;
         setEntries(data.entries);
         setHasMore(data.hasMore);
+        // Server computes this from the full file tail, not the entries window
+        if (data.turnComplete !== undefined) setTurnComplete(data.turnComplete);
       })
       .catch(err => {
         if (cancelled) return;
@@ -60,6 +65,18 @@ export function useTranscript(sessionId: string | null) {
     if (updates.length > 0) {
       const newEntries = updates.flat();
       setEntries(prev => [...prev, ...newEntries]);
+
+      // Update turnComplete based on new entries:
+      // user/tool_result = new input → not complete
+      // end_turn = Claude finished → complete
+      setTurnComplete(prev => {
+        let tc = prev;
+        for (const e of newEntries) {
+          if (e.type === 'user' || e.type === 'tool_result') tc = false;
+          if (e.stop_reason === 'end_turn') tc = true;
+        }
+        return tc;
+      });
     }
   }, [sessionId, transcriptVersion, getTranscriptUpdates]);
 
@@ -77,5 +94,5 @@ export function useTranscript(sessionId: string | null) {
     }
   }, [sessionId, entries]);
 
-  return { entries, loading, error, loadOlder, hasMore };
+  return { entries, loading, error, loadOlder, hasMore, turnComplete };
 }

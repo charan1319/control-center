@@ -25,11 +25,19 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const nextQueueId = useRef(0);
 
-  const handleMessageSent = useCallback((text: string) => {
+  const handleSendMessage = useCallback(async (text: string) => {
     const id = nextQueueId.current++;
-    setQueuedMessages(prev => [...prev, { id, text }]);
+    setQueuedMessages(prev => [...prev, { id, text, sent: false }]);
     setTimeout(() => setQueuedMessages(prev => prev.filter(m => m.id !== id)), 60000);
-  }, []);
+    try {
+      await api.sendInput(session.session_id, text);
+      setQueuedMessages(prev => prev.map(m => m.id === id ? { ...m, sent: true } : m));
+    } catch {
+      // Remove on failure — message was never delivered
+      setQueuedMessages(prev => prev.filter(m => m.id !== id));
+      showToast('Failed to send message', 'error');
+    }
+  }, [session.session_id, showToast]);
 
   const statusClass = getStatusClass(session);
   const label = session.label || session.session_id.slice(0, 12);
@@ -116,7 +124,7 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
           sessionId={session.session_id}
           mode={activeTab}
           terminalWs={terminalWsRef.current}
-          onMessageSent={handleMessageSent}
+          onSendMessage={handleSendMessage}
         />
       )}
     </div>

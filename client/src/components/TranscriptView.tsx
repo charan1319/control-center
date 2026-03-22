@@ -242,6 +242,7 @@ function renderEntry({ entry, result }: PairedEntry, index: number) {
 export interface QueuedMessage {
   id: number;
   text: string;
+  sent?: boolean;
 }
 
 interface TranscriptViewProps {
@@ -251,7 +252,7 @@ interface TranscriptViewProps {
 }
 
 export function TranscriptView({ sessionId, session, queuedMessages }: TranscriptViewProps) {
-  const { entries, loading, error, loadOlder, hasMore } = useTranscript(sessionId);
+  const { entries, loading, error, loadOlder, hasMore, turnComplete } = useTranscript(sessionId);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -277,9 +278,8 @@ export function TranscriptView({ sessionId, session, queuedMessages }: Transcrip
     }
   }, [queuedMessages, entries.length]);
 
-  // Filter queued messages at render time — hide if matching user entry exists after baseline.
-  // Unlike the old effect-based clearing, this never permanently removes a message from state;
-  // it just skips rendering it. If the match is wrong one render, it self-corrects the next.
+  // Filter queued messages at render time — hide if matching user entry exists after baseline,
+  // or if Claude completed a turn after a user entry appeared (handles content mismatch).
   const visibleQueued = useMemo(() => {
     if (!queuedMessages?.length) return [];
     return queuedMessages.filter(msg => {
@@ -287,10 +287,16 @@ export function TranscriptView({ sessionId, session, queuedMessages }: Transcrip
       if (baseline === undefined) return true; // baseline not yet set (first render), show it
       const needle = msg.text.slice(0, 50).trim();
       if (!needle) return false;
+      let sawUserAfterBaseline = false;
       for (let i = baseline; i < entries.length; i++) {
-        if (entries[i].type !== 'user') continue;
-        const content = typeof entries[i].content === 'string' ? entries[i].content : '';
-        if (content.includes(needle)) return false; // real entry exists, hide queued
+        if (entries[i].type === 'user') {
+          const content = typeof entries[i].content === 'string' ? entries[i].content : '';
+          if (content.includes(needle)) return false; // exact match — delivered
+          sawUserAfterBaseline = true;
+        }
+        // If a user entry appeared and Claude finished responding, message was processed
+        // even if the content match failed (handles formatting differences)
+        if (sawUserAfterBaseline && entries[i].stop_reason === 'end_turn') return false;
       }
       return true;
     });
@@ -388,14 +394,14 @@ export function TranscriptView({ sessionId, session, queuedMessages }: Transcrip
 
         {/* Queued messages — shown until real entry appears in transcript */}
         {visibleQueued.map((msg) => (
-          <div key={`queued-${msg.id}`} className="tx-entry tx-user tx-queued">
+          <div key={`queued-${msg.id}`} className={`tx-entry tx-user${msg.sent ? '' : ' tx-queued'}`}>
             <span className="tx-user-prefix">{'\u276f'}</span>
             {msg.text}
           </div>
         ))}
 
         {/* Live status indicators */}
-        {session && <LiveStatus session={session} entries={entries} hasQueuedInput={visibleQueued.length > 0} />}
+        {session && <LiveStatus session={session} entries={entries} hasQueuedInput={visibleQueued.length > 0} turnComplete={turnComplete} />}
       </div>
 
       {isScrolledUp && (
@@ -409,7 +415,7 @@ export function TranscriptView({ sessionId, session, queuedMessages }: Transcrip
 
 // ─── Live status: thinking indicator + permission request ───
 
-function LiveStatus({ session, entries, hasQueuedInput }: { session: Session; entries: TranscriptEntry[]; hasQueuedInput: boolean }) {
+function LiveStatus({ session, entries, hasQueuedInput, turnComplete }: { session: Session; entries: TranscriptEntry[]; hasQueuedInput: boolean; turnComplete: boolean }) {
   const statusClass = getStatusClass(session);
   const [granting, setGranting] = useState(false);
 
@@ -448,11 +454,10 @@ function LiveStatus({ session, entries, hasQueuedInput }: { session: Session; en
     );
   }
 
-  // Active/idle indicator — use stop_reason + queued input to determine state
+  // Active/idle indicator — turnComplete is computed server-side from the
+  // full JSONL tail, so it works regardless of the entries read window.
+  // It's updated client-side as WS entries arrive.
   if (statusClass === 'active' || statusClass === 'idle') {
-    const last = entries.length > 0 ? entries[entries.length - 1] : null;
-
-    // User sent input that hasn't appeared in transcript yet
     if (hasQueuedInput) {
       return (
         <div className="tx-live-thinking">
@@ -464,27 +469,11 @@ function LiveStatus({ session, entries, hasQueuedInput }: { session: Session; en
       );
     }
 
-    // Model finished its turn — not thinking
-    if (last?.stop_reason === 'end_turn') return null;
+    // Model's last turn is complete — not thinking
+    if (turnComplete) return null;
 
-    // Last entry is user input — Claude should start processing soon
-    // (works for both active and idle, covers the gap between entry appearing
-    // and Claude producing its first response)
-    if (last?.type === 'user') {
-      return (
-        <div className="tx-live-thinking">
-          <div className="tx-live-thinking-dots">
-            <span /><span /><span />
-          </div>
-          <span className="tx-live-thinking-text">Thinking...</span>
-        </div>
-      );
-    }
-
-    // Below: only show for active sessions (heartbeat confirms Claude is alive)
-    if (statusClass !== 'active') return null;
-
-    // A tool_use without a following tool_result means a tool is actively running
+    // Model is working — check last entry for "Working" vs "Thinking" display
+    const last = entries.length > 0 ? entries[entries.length - 1] : null;
     if (last?.type === 'tool_use') {
       return (
         <div className="tx-live-thinking">
@@ -498,7 +487,6 @@ function LiveStatus({ session, entries, hasQueuedInput }: { session: Session; en
       );
     }
 
-    // Session is active and model hasn't signaled end_turn — it's thinking
     return (
       <div className="tx-live-thinking">
         <div className="tx-live-thinking-dots">

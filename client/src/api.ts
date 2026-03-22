@@ -73,7 +73,7 @@ export const api = {
     if (limit) params.set('limit', String(limit));
     if (before) params.set('before', before);
     const qs = params.toString();
-    return fetchJson<{ entries: TranscriptEntry[]; hasMore: boolean }>(`/api/sessions/${id}/transcript${qs ? '?' + qs : ''}`);
+    return fetchJson<{ entries: TranscriptEntry[]; hasMore: boolean; turnComplete?: boolean }>(`/api/sessions/${id}/transcript${qs ? '?' + qs : ''}`);
   },
   getSessionFiles: (id: string) =>
     fetchJson<{ files: FileEdit[] }>(`/api/sessions/${id}/files`),

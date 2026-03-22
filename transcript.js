@@ -249,6 +249,66 @@ export function getTranscriptSize(filePath) {
 }
 
 /**
+ * Check whether the model's last turn is complete by scanning the tail of the JSONL.
+ * Returns true when the most recent stop_reason:'end_turn' comes AFTER the most recent
+ * user/tool_result input — meaning Claude has finished responding.
+ * Reads only the last `maxBytes` (default 16KB) so it's lightweight regardless of file size.
+ */
+export function isLastTurnComplete(filePath, maxBytes = 16384) {
+  if (!filePath || !existsSync(filePath)) return true;
+  try {
+    const fd = openSync(filePath, 'r');
+    try {
+      const { size } = fstatSync(fd);
+      if (size === 0) return true;
+      const readSize = Math.min(maxBytes, size);
+      const buf = Buffer.allocUnsafe(readSize);
+      readSync(fd, buf, 0, readSize, size - readSize);
+      const lines = buf.toString('utf8').split('\n');
+      const startIdx = size > maxBytes ? 1 : 0;
+
+      // Scan backward: find the last end_turn and last input position
+      let lastEndTurn = -1;
+      let lastInput = -1;
+      for (let i = startIdx; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        let obj;
+        try { obj = JSON.parse(line); } catch { continue; }
+
+        if (obj.type === 'assistant') {
+          const sr = obj.message?.stop_reason;
+          if (sr === 'end_turn') lastEndTurn = i;
+        } else if (obj.type === 'user') {
+          // Check if this user entry has actual user content (not just tool_results)
+          const content = obj.message?.content;
+          if (typeof content === 'string') {
+            lastInput = i;
+          } else if (Array.isArray(content)) {
+            const hasToolResult = content.some(b => b.type === 'tool_result');
+            const hasText = content.some(b => b.type === 'text');
+            if (hasToolResult) lastInput = i; // tool_result = input needing response
+            if (hasText) lastInput = i;       // real user text
+          }
+        } else if (obj.type === 'tool_result') {
+          lastInput = i; // legacy format
+        } else if (obj.type === 'queue-operation' && obj.operation === 'enqueue') {
+          lastInput = i;
+        }
+      }
+
+      // If no input found, turn is complete (nothing to respond to)
+      if (lastInput === -1) return true;
+      // If no end_turn found, turn is NOT complete (input exists without response)
+      if (lastEndTurn === -1) return false;
+      return lastEndTurn > lastInput;
+    } finally {
+      closeSync(fd);
+    }
+  } catch { return true; }
+}
+
+/**
  * Return the last assistant text block from a transcript, or null.
  */
 export function getLastAssistantText(filePath, maxBytes = 16384) {

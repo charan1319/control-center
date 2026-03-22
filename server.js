@@ -11,7 +11,7 @@ import config from './config.js';
 import * as db from './db.js';
 import * as ptyManager from './pty-manager.js';
 import * as snapshots from './snapshots.js';
-import { readTranscriptTail, getLastAssistantText, readTranscriptStructured, getTranscriptSize } from './transcript.js';
+import { readTranscriptTail, getLastAssistantText, readTranscriptStructured, getTranscriptSize, isLastTurnComplete } from './transcript.js';
 import * as pulse from './pulse.js';
 
 // Configure web-push VAPID keys (no-op if keys not set)
@@ -493,6 +493,35 @@ export async function buildServer(opts = {}) {
    * Parse an array of JSONL lines into structured transcript entries.
    * Mirrors readTranscriptStructured logic but works on pre-split lines.
    */
+  // Classify system-injected content masquerading as user messages (mirrors transcript.js)
+  function classifySystemInjection(text, timestamp) {
+    const trimmed = text.trim();
+    if (trimmed.startsWith('<task-notification>')) {
+      const summaryMatch = trimmed.match(/<summary>([\s\S]*?)<\/summary>/);
+      const resultMatch = trimmed.match(/<result>([\s\S]*?)<\/result>/);
+      const statusMatch = trimmed.match(/<status>([\s\S]*?)<\/status>/);
+      return {
+        type: 'system', subtype: 'task_notification',
+        content: summaryMatch ? summaryMatch[1].trim() : 'Task completed',
+        detail: resultMatch ? resultMatch[1].trim() : '',
+        status: statusMatch ? statusMatch[1].trim() : '',
+        timestamp,
+      };
+    }
+    if (trimmed.startsWith('This session is being continued from a previous conversation')) {
+      const summaryIdx = trimmed.indexOf('Summary:');
+      const detail = summaryIdx !== -1 ? trimmed.slice(summaryIdx + 'Summary:'.length).trim() : '';
+      return { type: 'system', subtype: 'compact', content: 'Context compacted', detail, timestamp };
+    }
+    if (trimmed.startsWith('<local-command-caveat>') ||
+        trimmed.startsWith('<command-name>') ||
+        trimmed.startsWith('<local-command-stdout>') ||
+        trimmed.startsWith('[Project context')) {
+      return { type: 'system', subtype: 'local_command', content: '', timestamp };
+    }
+    return null;
+  }
+
   function parseTranscriptLines(lines, skipFirst = false) {
     const entries = [];
     const startIdx = skipFirst ? 1 : 0;
@@ -527,9 +556,17 @@ export async function buildServer(opts = {}) {
             }
           }
           const userText = textParts.join('\n');
-          if (userText) entries.push({ type: 'user', content: userText, timestamp });
+          if (userText) {
+            const systemEntry = classifySystemInjection(userText, timestamp);
+            if (systemEntry) entries.push(systemEntry);
+            else entries.push({ type: 'user', content: userText, timestamp });
+          }
         } else if (typeof content === 'string') {
-          if (content) entries.push({ type: 'user', content, timestamp });
+          if (content) {
+            const systemEntry = classifySystemInjection(content, timestamp);
+            if (systemEntry) entries.push(systemEntry);
+            else entries.push({ type: 'user', content, timestamp });
+          }
         }
 
       } else if (obj.type === 'assistant') {
@@ -572,8 +609,10 @@ export async function buildServer(opts = {}) {
         });
 
       } else if (obj.type === 'queue-operation' && obj.operation === 'enqueue' && obj.content) {
-        // Message queued while Claude was busy — treat as user input
-        entries.push({ type: 'user', content: obj.content, timestamp });
+        // Message queued while Claude was busy — treat as user input (unless system-injected)
+        const systemEntry = classifySystemInjection(obj.content, timestamp);
+        if (systemEntry) entries.push(systemEntry);
+        else entries.push({ type: 'user', content: obj.content, timestamp });
       }
     }
     return entries;
@@ -1157,7 +1196,12 @@ export async function buildServer(opts = {}) {
     // hasMore: true if we didn't read the entire file (there may be older entries)
     const hasMore = !readFull || (before ? allEntries.some(e => e.timestamp && e.timestamp < before && !entries.includes(e)) : allEntries.length > limit);
 
-    return { entries, hasMore };
+    // Lightweight tail check: is the model's last turn complete?
+    // Independent of the entries read window, so it works even when
+    // end_turn is outside the maxBytes window.
+    const turnComplete = isLastTurnComplete(session.transcript);
+
+    return { entries, hasMore, turnComplete };
   });
 
   // ──────────────────────────────────────────────

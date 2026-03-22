@@ -90,11 +90,6 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
     }
   }, [session.session_id, session.label, isServerSession]);
 
-  const handleTerminal = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    onSelect();
-  }, [onSelect]);
-
   const handleEdit = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     setEditOpen(true);
@@ -205,22 +200,21 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
         <div className="card-summary-loading" />
       ) : null}
 
-      <div className="card-actions">
-        {statusClass === 'waiting' && session.tmux_target && session.cli_type !== 'codex' && (
+      {statusClass === 'waiting' && session.tmux_target && session.cli_type !== 'codex' && (
+        <div className="card-grant-row">
           <button className="btn-grant" onClick={handleGrant}>
-            Grant
+            Grant Permission
           </button>
-        )}
+        </div>
+      )}
+
+      <div className="card-actions">
         {statusClass === 'waiting' && session.cli_type === 'codex' && (
           <span className="codex-approval-note" title="Codex approval policy is set at launch">
             Codex approval policy is set at launch
           </span>
         )}
-        {session.tmux_target ? (
-          <button className="btn-terminal" onClick={handleTerminal}>
-            Terminal
-          </button>
-        ) : (
+        {!session.tmux_target && (
           <button className="btn-link-tmux" onClick={handleLinkTmux}>
             Link tmux
           </button>
