@@ -254,7 +254,7 @@ export function getTranscriptSize(filePath) {
  * user/tool_result input — meaning Claude has finished responding.
  * Reads only the last `maxBytes` (default 16KB) so it's lightweight regardless of file size.
  */
-export function isLastTurnComplete(filePath, maxBytes = 16384) {
+export function isLastTurnComplete(filePath, maxBytes = 262144) {
   if (!filePath || !existsSync(filePath)) return true;
   try {
     const fd = openSync(filePath, 'r');
