@@ -80,6 +80,19 @@ export function useTranscript(sessionId: string | null) {
     }
   }, [sessionId, transcriptVersion, getTranscriptUpdates]);
 
+  // Safety net: when the indicator is showing (turnComplete=false), periodically
+  // re-check from the API. This catches missed WS updates (e.g. from reconnections
+  // where the end_turn entry was written while the socket was down).
+  useEffect(() => {
+    if (!sessionId || turnComplete || loading) return;
+    const interval = setInterval(() => {
+      api.getTranscript(sessionId, 1).then(data => {
+        if (data.turnComplete) setTurnComplete(true);
+      }).catch(() => {});
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [sessionId, turnComplete, loading]);
+
   const loadOlder = useCallback(async () => {
     if (!sessionId || !entries.length) return;
     const oldest = entries[0];
