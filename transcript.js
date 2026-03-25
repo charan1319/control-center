@@ -267,8 +267,12 @@ export function isLastTurnComplete(filePath, maxBytes = 262144) {
       const lines = buf.toString('utf8').split('\n');
       const startIdx = size > maxBytes ? 1 : 0;
 
-      // Scan backward: find the last end_turn and last input position
-      let lastEndTurn = -1;
+      // Scan forward: find the last completed turn and last input position.
+      // Any stop_reason OTHER than 'tool_use' means the model finished
+      // (end_turn, stop_sequence, max_tokens, etc.).
+      // queue-operation entries are NOT counted as input — they're queued
+      // but haven't been sent to the model yet.
+      let lastDone = -1;
       let lastInput = -1;
       for (let i = startIdx; i < lines.length; i++) {
         const line = lines[i].trim();
@@ -278,30 +282,23 @@ export function isLastTurnComplete(filePath, maxBytes = 262144) {
 
         if (obj.type === 'assistant') {
           const sr = obj.message?.stop_reason;
-          if (sr === 'end_turn') lastEndTurn = i;
+          if (sr && sr !== 'tool_use') lastDone = i;
         } else if (obj.type === 'user') {
-          // Check if this user entry has actual user content (not just tool_results)
           const content = obj.message?.content;
           if (typeof content === 'string') {
             lastInput = i;
           } else if (Array.isArray(content)) {
-            const hasToolResult = content.some(b => b.type === 'tool_result');
-            const hasText = content.some(b => b.type === 'text');
-            if (hasToolResult) lastInput = i; // tool_result = input needing response
-            if (hasText) lastInput = i;       // real user text
+            if (content.some(b => b.type === 'tool_result' || b.type === 'text')) lastInput = i;
           }
         } else if (obj.type === 'tool_result') {
-          lastInput = i; // legacy format
-        } else if (obj.type === 'queue-operation' && obj.operation === 'enqueue') {
           lastInput = i;
         }
+        // queue-operation intentionally NOT counted as input
       }
 
-      // If no input found, turn is complete (nothing to respond to)
       if (lastInput === -1) return true;
-      // If no end_turn found, turn is NOT complete (input exists without response)
-      if (lastEndTurn === -1) return false;
-      return lastEndTurn > lastInput;
+      if (lastDone === -1) return false;
+      return lastDone > lastInput;
     } finally {
       closeSync(fd);
     }

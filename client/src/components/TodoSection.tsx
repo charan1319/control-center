@@ -15,7 +15,7 @@ export function TodoSection({ project }: TodoSectionProps) {
   const { todoStopVersion, getTodoStopEvents } = useWebSocket();
 
   const [todos, setTodos] = useState<Todo[]>([]);
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDetails, setNewDetails] = useState('');

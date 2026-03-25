@@ -92,7 +92,7 @@ export function projectColor(name: string): string | null {
   return PROJECT_COLORS[Math.abs(h) % PROJECT_COLORS.length];
 }
 
-export function groupByProject(sessions: Session[]): Map<string, Session[]> {
+export function groupByProject(sessions: Session[], projectOrder?: string[]): Map<string, Session[]> {
   const active = sessions.filter(s => s.status !== 'stopped');
   const groups = new Map<string, Session[]>();
   const ungrouped: Session[] = [];
@@ -107,8 +107,17 @@ export function groupByProject(sessions: Session[]): Map<string, Session[]> {
     }
   }
 
-  // Sort groups alphabetically
-  const sorted = new Map([...groups.entries()].sort(([a], [b]) => a.localeCompare(b)));
+  // Sort by projects.json order if available, then alphabetically for unknowns
+  const sorted = new Map([...groups.entries()].sort(([a], [b]) => {
+    if (projectOrder) {
+      const ia = projectOrder.indexOf(a);
+      const ib = projectOrder.indexOf(b);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+    }
+    return a.localeCompare(b);
+  }));
 
   // Ungrouped at the end
   if (ungrouped.length > 0) {

@@ -68,12 +68,12 @@ export function useTranscript(sessionId: string | null) {
 
       // Update turnComplete based on new entries:
       // user/tool_result = new input → not complete
-      // end_turn = Claude finished → complete
+      // Any stop_reason other than tool_use = model finished → complete
       setTurnComplete(prev => {
         let tc = prev;
         for (const e of newEntries) {
           if (e.type === 'user' || e.type === 'tool_result') tc = false;
-          if (e.stop_reason === 'end_turn') tc = true;
+          if (e.stop_reason && e.stop_reason !== 'tool_use') tc = true;
         }
         return tc;
       });
