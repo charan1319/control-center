@@ -42,6 +42,14 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
   const statusClass = getStatusClass(session);
   const label = session.label || session.session_id.slice(0, 12);
 
+  const handleAutoApproveChange = useCallback(async (value: number) => {
+    try {
+      await api.patchSession(session.session_id, { auto_approve: value });
+    } catch {
+      showToast('Failed to update auto-approve', 'error');
+    }
+  }, [session.session_id, showToast]);
+
   const handleWsReady = useCallback((ws: WebSocket | null) => {
     terminalWsRef.current = ws;
     forceUpdate(n => n + 1);
@@ -97,6 +105,18 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
           >
             Terminal
           </button>
+        )}
+        {session.status !== 'stopped' && (
+          <select
+            className="sd-auto-approve"
+            value={session.auto_approve}
+            onChange={e => handleAutoApproveChange(Number(e.target.value))}
+            title="Permission auto-approve level"
+          >
+            <option value={0}>Manual</option>
+            <option value={2}>Read-only</option>
+            <option value={1}>Full auto</option>
+          </select>
         )}
       </div>
 

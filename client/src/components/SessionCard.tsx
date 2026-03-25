@@ -116,6 +116,15 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
     }
   }, [session.session_id, session.pulse_enabled]);
 
+  const handleAutoApproveChange = useCallback(async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    e.stopPropagation();
+    try {
+      await api.patchSession(session.session_id, { auto_approve: Number(e.target.value) });
+    } catch {
+      showToast('Failed to update auto-approve', 'error');
+    }
+  }, [session.session_id, showToast]);
+
   const canAcceptDrop = !isStopped && !!session.tmux_target;
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -214,6 +223,19 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
             Codex approval policy is set at launch
           </span>
         )}
+        {!isStopped && (
+          <select
+            className="card-auto-approve"
+            value={session.auto_approve}
+            onChange={handleAutoApproveChange}
+            onClick={e => e.stopPropagation()}
+            title="Permission auto-approve level"
+          >
+            <option value={0}>Manual</option>
+            <option value={2}>Read-only</option>
+            <option value={1}>Full auto</option>
+          </select>
+        )}
         {!session.tmux_target && (
           <button className="btn-link-tmux" onClick={handleLinkTmux}>
             Link tmux
@@ -280,6 +302,7 @@ export const SessionCard = React.memo(SessionCardInner, (prev, next) => {
     prev.session.status === next.session.status &&
     prev.session.pending_tool === next.session.pending_tool &&
     prev.session.pulse_enabled === next.session.pulse_enabled &&
+    prev.session.auto_approve === next.session.auto_approve &&
     prev.isSelected === next.isSelected
   );
 });

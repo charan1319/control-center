@@ -118,6 +118,24 @@
   border-bottom-color: var(--color-accent);
 }
 
+.sd-auto-approve {
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--ctp-surface1);
+  background: var(--ctp-surface0);
+  color: var(--ctp-subtext0);
+  cursor: pointer;
+  margin-left: 4px;
+  outline: none;
+  align-self: center;
+}
+
+.sd-auto-approve:hover {
+  border-color: var(--color-accent);
+  color: var(--ctp-text);
+}
+
 /* ─── Content area ─── */
 .sd-content {
   flex: 1;

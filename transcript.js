@@ -16,13 +16,30 @@ export function readTranscriptTail(filePath, maxBytes = 32768) {
       readSync(fd, buf, 0, readSize, size - readSize);
       const lines = buf.toString('utf8').split('\n');
       const startIdx = size > maxBytes ? 1 : 0; // skip potentially incomplete first line
+      const parsed = [];
       for (let i = startIdx; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line) continue;
-        try {
-          const obj = JSON.parse(line);
+        try { parsed.push(JSON.parse(line)); } catch { /* malformed line */ }
+      }
+      // For Codex transcripts, synthesize Claude-like turn objects from structured entries
+      if (isCodexFormat(parsed)) {
+        for (const obj of parsed) {
+          if (obj.type === 'event_msg' && obj.payload?.type === 'user_message') {
+            turns.push({ type: 'user', message: { content: obj.payload.message }, timestamp: obj.timestamp });
+          } else if (obj.type === 'response_item' && obj.payload?.type === 'message' && obj.payload?.role === 'assistant') {
+            const text = (obj.payload.content || [])
+              .filter(c => c.type === 'output_text' || c.type === 'text')
+              .map(c => c.text || '').join('');
+            if (text) {
+              turns.push({ type: 'assistant', message: { content: [{ type: 'text', text }] }, timestamp: obj.timestamp });
+            }
+          }
+        }
+      } else {
+        for (const obj of parsed) {
           if (obj.type === 'user' || obj.type === 'assistant') turns.push(obj);
-        } catch { /* malformed line */ }
+        }
       }
     } finally {
       closeSync(fd);
@@ -33,6 +50,7 @@ export function readTranscriptTail(filePath, maxBytes = 32768) {
 
 /**
  * Summarize tool input for display — returns a short human-readable string.
+ * Works for both Claude and Codex tool names.
  */
 function summarizeToolInput(toolName, input) {
   if (!input) return '';
@@ -54,6 +72,13 @@ function summarizeToolInput(toolName, input) {
         return [obj.pattern, obj.path].filter(Boolean).join(' ');
       case 'WebFetch':
         return obj.url || '';
+      // Codex tool names
+      case 'exec_command':
+        return (obj.cmd || '').slice(0, 80);
+      case 'apply_patch':
+        return input ? String(input).slice(0, 80) : '';
+      case 'read_file':
+        return obj.file_path || obj.path || '';
       default:
         return JSON.stringify(obj).slice(0, 80);
     }
@@ -114,7 +139,130 @@ function classifySystemInjection(text, timestamp) {
 }
 
 /**
+ * Detect whether a set of parsed JSONL objects are in Codex format.
+ * Codex entries use { type: 'event_msg' | 'response_item' | 'session_meta' | 'turn_context' }.
+ */
+export function isCodexFormat(parsedLines) {
+  for (const obj of parsedLines) {
+    if (obj.type === 'event_msg' || obj.type === 'response_item' || obj.type === 'session_meta' || obj.type === 'turn_context') {
+      return true;
+    }
+    // Claude format uses top-level type: 'user' | 'assistant' | 'tool_result'
+    if (obj.type === 'user' || obj.type === 'assistant' || obj.type === 'tool_result') {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * Parse Codex JSONL objects into the same TranscriptEntry format used by the frontend.
+ * Codex format: event_msg (user_message, agent_message, task_started, task_complete, token_count),
+ *               response_item (message, function_call, function_call_output, custom_tool_call,
+ *                              custom_tool_call_output, reasoning)
+ */
+export function parseCodexEntries(parsedLines) {
+  const entries = [];
+  for (const obj of parsedLines) {
+    const timestamp = obj.timestamp || undefined;
+    const payload = obj.payload;
+    if (!payload) continue;
+
+    if (obj.type === 'event_msg') {
+      if (payload.type === 'user_message' && payload.message) {
+        entries.push({ type: 'user', content: payload.message, timestamp });
+      }
+      // agent_message is a duplicate of response_item message — skip to avoid doubling
+    } else if (obj.type === 'response_item') {
+      const subtype = payload.type;
+
+      if (subtype === 'message' && payload.role === 'assistant') {
+        const content = payload.content;
+        if (Array.isArray(content)) {
+          const text = content
+            .filter(c => c.type === 'output_text' || c.type === 'text')
+            .map(c => c.text || '')
+            .join('');
+          if (text) {
+            entries.push({ type: 'assistant', content: text, timestamp });
+          }
+        }
+      } else if (subtype === 'message' && payload.role === 'user') {
+        // User context messages (input_text blocks) — usually the initial prompt
+        const content = payload.content;
+        if (Array.isArray(content)) {
+          const text = content
+            .filter(c => c.type === 'input_text' || c.type === 'text')
+            .map(c => c.text || '')
+            .join('\n');
+          if (text) {
+            entries.push({ type: 'user', content: text, timestamp });
+          }
+        }
+      } else if (subtype === 'reasoning') {
+        // Codex reasoning (summary is visible, content may be encrypted)
+        const summaryParts = payload.summary;
+        if (Array.isArray(summaryParts)) {
+          const text = summaryParts.map(s => s.text || '').join('');
+          if (text) {
+            entries.push({ type: 'thinking', content: text, timestamp });
+          }
+        }
+      } else if (subtype === 'function_call') {
+        const toolName = payload.name || '';
+        let argsObj = {};
+        try { argsObj = JSON.parse(payload.arguments || '{}'); } catch { /* ignore */ }
+        const summary = summarizeToolInput(toolName, argsObj);
+        entries.push({
+          type: 'tool_use',
+          content: summary,
+          tool_name: toolName,
+          tool_input_summary: summary,
+          tool_input_full: JSON.stringify(argsObj, null, 2),
+          timestamp,
+        });
+      } else if (subtype === 'function_call_output') {
+        const output = payload.output || '';
+        entries.push({
+          type: 'tool_result',
+          content: output.slice(0, 500),
+          is_error: false,
+          timestamp,
+        });
+      } else if (subtype === 'custom_tool_call') {
+        const toolName = payload.name || '';
+        const input = payload.input || '';
+        const summary = toolName === 'apply_patch'
+          ? (input.match(/\*\*\* (?:Add|Update|Delete) File: (.+)/)?.[1] || input.slice(0, 80))
+          : String(input).slice(0, 80);
+        entries.push({
+          type: 'tool_use',
+          content: summary,
+          tool_name: toolName,
+          tool_input_summary: summary,
+          tool_input_full: input,
+          timestamp,
+        });
+      } else if (subtype === 'custom_tool_call_output') {
+        let output = payload.output || '';
+        if (typeof output === 'object') {
+          output = output.output || JSON.stringify(output);
+        }
+        entries.push({
+          type: 'tool_result',
+          content: String(output).slice(0, 500),
+          is_error: false,
+          timestamp,
+        });
+      }
+    }
+  }
+  return entries;
+}
+
+/**
  * Read the tail of a JSONL transcript file and return a structured array of entries.
+ * Auto-detects Claude vs Codex transcript format.
  *
  * Each entry has: { type, content, tool_name?, tool_input_summary?, tool_input_full?, tool_result?, is_error?, timestamp? }
  *
@@ -135,12 +283,20 @@ export function readTranscriptStructured(filePath, maxBytes = 65536) {
       const lines = buf.toString('utf8').split('\n');
       const startIdx = size > maxBytes ? 1 : 0; // skip potentially incomplete first line
 
+      // Parse all lines first, then detect format
+      const parsedLines = [];
       for (let i = startIdx; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line) continue;
-        let obj;
-        try { obj = JSON.parse(line); } catch { continue; }
+        try { parsedLines.push(JSON.parse(line)); } catch { continue; }
+      }
 
+      // Codex uses a different transcript format — dispatch to its parser
+      if (isCodexFormat(parsedLines)) {
+        return parseCodexEntries(parsedLines);
+      }
+
+      for (const obj of parsedLines) {
         const timestamp = obj.timestamp || undefined;
 
         if (obj.type === 'user') {
@@ -267,31 +423,42 @@ export function isLastTurnComplete(filePath, maxBytes = 262144) {
       const lines = buf.toString('utf8').split('\n');
       const startIdx = size > maxBytes ? 1 : 0;
 
-      // Scan forward: find the last completed turn and last input position.
-      // Any stop_reason OTHER than 'tool_use' means the model finished
-      // (end_turn, stop_sequence, max_tokens, etc.).
-      // queue-operation entries are NOT counted as input — they're queued
-      // but haven't been sent to the model yet.
-      let lastDone = -1;
-      let lastInput = -1;
+      const parsed = [];
       for (let i = startIdx; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line) continue;
-        let obj;
-        try { obj = JSON.parse(line); } catch { continue; }
+        try { parsed.push({ idx: i, obj: JSON.parse(line) }); } catch { continue; }
+      }
 
+      // Codex format: task_complete means the turn is done, user_message means new input
+      if (parsed.length > 0 && isCodexFormat(parsed.map(p => p.obj))) {
+        let lastDone = -1;
+        let lastInput = -1;
+        for (const { idx, obj } of parsed) {
+          if (obj.type === 'event_msg' && obj.payload?.type === 'task_complete') lastDone = idx;
+          else if (obj.type === 'event_msg' && obj.payload?.type === 'user_message') lastInput = idx;
+        }
+        if (lastInput === -1) return true;
+        if (lastDone === -1) return false;
+        return lastDone > lastInput;
+      }
+
+      // Claude format: scan for stop_reason and input positions
+      let lastDone = -1;
+      let lastInput = -1;
+      for (const { idx, obj } of parsed) {
         if (obj.type === 'assistant') {
           const sr = obj.message?.stop_reason;
-          if (sr && sr !== 'tool_use') lastDone = i;
+          if (sr && sr !== 'tool_use') lastDone = idx;
         } else if (obj.type === 'user') {
           const content = obj.message?.content;
           if (typeof content === 'string') {
-            lastInput = i;
+            lastInput = idx;
           } else if (Array.isArray(content)) {
-            if (content.some(b => b.type === 'tool_result' || b.type === 'text')) lastInput = i;
+            if (content.some(b => b.type === 'tool_result' || b.type === 'text')) lastInput = idx;
           }
         } else if (obj.type === 'tool_result') {
-          lastInput = i;
+          lastInput = idx;
         }
         // queue-operation intentionally NOT counted as input
       }

@@ -141,6 +141,22 @@
   border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
 }
 
+/* Auto-approve dropdown on card */
+.card-auto-approve {
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--ctp-surface1);
+  background: var(--ctp-surface0);
+  color: var(--ctp-subtext0);
+  cursor: pointer;
+  outline: none;
+}
+.card-auto-approve:hover {
+  border-color: var(--color-accent);
+  color: var(--ctp-text);
+}
+
 /* Codex approval note */
 .codex-approval-note {
   font-size: 11px;

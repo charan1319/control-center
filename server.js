@@ -5,14 +5,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, basename } from 'node:path';
 import { hostname } from 'node:os';
 import { execFileSync, execFile, execSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, watch, openSync, readSync, fstatSync, closeSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, watch, openSync, readSync, fstatSync, closeSync, readdirSync, statSync } from 'node:fs';
 import webpush from 'web-push';
 import config from './config.js';
 import * as db from './db.js';
 import * as ptyManager from './pty-manager.js';
 import * as snapshots from './snapshots.js';
-import { readTranscriptTail, getLastAssistantText, readTranscriptStructured, getTranscriptSize, isLastTurnComplete } from './transcript.js';
+import { readTranscriptTail, getLastAssistantText, readTranscriptStructured, getTranscriptSize, isLastTurnComplete, isCodexFormat, parseCodexEntries } from './transcript.js';
 import * as pulse from './pulse.js';
+import * as codexWatcher from './codex-watcher.js';
 
 // Configure web-push VAPID keys (no-op if keys not set)
 if (config.pushEnabled) {
@@ -408,6 +409,61 @@ export async function buildServer(opts = {}) {
   }
 
   // ──────────────────────────────────────────────
+  // Codex transcript discovery
+  // Polls ~/.codex/sessions/ for new transcript files after launching a Codex session.
+  // ──────────────────────────────────────────────
+
+  function discoverCodexTranscript(sessionId, cwd) {
+    const sessionsDir = join(process.env.HOME || '/tmp', '.codex', 'sessions');
+    const startTime = Date.now();
+    const poll = setInterval(() => {
+      if (Date.now() - startTime > 30_000) {
+        clearInterval(poll);
+        return;
+      }
+      try {
+        const now = new Date();
+        const dateDir = join(sessionsDir, String(now.getFullYear()),
+          String(now.getMonth() + 1).padStart(2, '0'),
+          String(now.getDate()).padStart(2, '0'));
+        if (!existsSync(dateDir)) return;
+        const files = readdirSync(dateDir)
+          .filter(f => f.endsWith('.jsonl'))
+          .map(f => ({ path: join(dateDir, f), mtime: statSync(join(dateDir, f)).mtimeMs }))
+          .sort((a, b) => b.mtime - a.mtime);
+        for (const file of files) {
+          if (file.mtime < startTime - 5000) continue;
+          try {
+            const fd = openSync(file.path, 'r');
+            const buf = Buffer.alloc(1024);
+            const bytesRead = readSync(fd, buf, 0, 1024, 0);
+            closeSync(fd);
+            const firstLine = buf.toString('utf8', 0, bytesRead).split('\n')[0];
+            const meta = JSON.parse(firstLine);
+            if (meta.type === 'session_meta' && meta.payload?.cwd === cwd) {
+              db.upsertSession({ session_id: sessionId, cwd, transcript: file.path, cli_type: 'codex' });
+              // Start watching for heartbeats
+              codexWatcher.startWatching(sessionId, file.path, (hb) => {
+                db.upsertHeartbeat({ session_id: sessionId, tool_name: hb.tool_name });
+                if (hb.file_path) db.insertFileEdit(sessionId, hb.file_path, hb.tool_name);
+                const cur = db.getSession(sessionId);
+                if (cur?.status !== 'stopped') {
+                  db.updateStatus(sessionId, 'active');
+                  broadcastSessionUpdate(db.getSession(sessionId));
+                }
+              });
+              const updated = db.getSession(sessionId);
+              if (updated) broadcastSessionUpdate(updated);
+              clearInterval(poll);
+              return;
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* directory may not exist yet */ }
+    }, 2000);
+  }
+
+  // ──────────────────────────────────────────────
   // Transcript watcher helpers
   // ──────────────────────────────────────────────
 
@@ -525,11 +581,21 @@ export async function buildServer(opts = {}) {
   function parseTranscriptLines(lines, skipFirst = false) {
     const entries = [];
     const startIdx = skipFirst ? 1 : 0;
+
+    // Parse all lines first to detect format
+    const parsed = [];
     for (let i = startIdx; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
-      let obj;
-      try { obj = JSON.parse(line); } catch { continue; }
+      try { parsed.push(JSON.parse(line)); } catch { continue; }
+    }
+
+    // Codex transcripts use a different format — delegate to the shared parser
+    if (isCodexFormat(parsed)) {
+      return parseCodexEntries(parsed);
+    }
+
+    for (const obj of parsed) {
       const timestamp = obj.timestamp || undefined;
 
       if (obj.type === 'user') {
@@ -909,7 +975,7 @@ export async function buildServer(opts = {}) {
   });
 
   fastify.patch('/api/sessions/:id', async (request, reply) => {
-    const { label, tmux_target, project, pulse_enabled } = request.body || {};
+    const { label, tmux_target, project, pulse_enabled, auto_approve } = request.body || {};
     if (label !== undefined && (typeof label !== 'string' || label.length > 256)) {
       return reply.status(400).send({ error: 'Label must be a string under 256 characters' });
     }
@@ -922,9 +988,12 @@ export async function buildServer(opts = {}) {
     if (pulse_enabled !== undefined && ![0, 1].includes(pulse_enabled)) {
       return reply.status(400).send({ error: 'pulse_enabled must be 0 or 1' });
     }
+    if (auto_approve !== undefined && ![0, 1, 2].includes(auto_approve)) {
+      return reply.status(400).send({ error: 'auto_approve must be 0 (manual), 1 (full), or 2 (read-only)' });
+    }
     const session = db.getSession(request.params.id);
     if (!session) return reply.status(404).send({ error: 'Session not found' });
-    db.updateSession(request.params.id, { label, tmux_target, project, pulse_enabled });
+    db.updateSession(request.params.id, { label, tmux_target, project, pulse_enabled, auto_approve });
     const updated = db.getSession(request.params.id);
     broadcastSessionUpdate(updated);
     return updated;
@@ -977,8 +1046,35 @@ export async function buildServer(opts = {}) {
       // Start headless PTY capture immediately so scrollback is captured from session start
       setTimeout(() => ptyManager.startCapture(tmuxTarget), 1000);
 
-      // Store label/project/autoApprove so the SessionStart hook handler can apply them when auto-linking
       const autoApproveDbVal = autoApprove === 'none' ? 0 : autoApprove === 'readonly' ? 2 : 1;
+
+      if ((cli_type || 'claude') === 'codex') {
+        // Codex has no hook system — pre-register the session immediately
+        const sessionId = `codex-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const sessionCwd = cwd || process.env.HOME;
+        db.upsertSession({
+          session_id: sessionId,
+          cwd: sessionCwd,
+          model: null,
+          transcript: null,
+          cli_type: 'codex',
+        });
+        db.updateSession(sessionId, {
+          tmux_target: tmuxTarget,
+          label: label || `${hostname()}:${basename(sessionCwd)}`,
+          project: project || undefined,
+          auto_approve: autoApproveDbVal,
+        });
+
+        // Watch for the transcript file to appear in ~/.codex/sessions/
+        discoverCodexTranscript(sessionId, sessionCwd);
+
+        const session = db.getSession(sessionId);
+        if (session) broadcastSessionUpdate(session);
+        return { success: true, tmux_target: tmuxTarget, label, session_id: sessionId };
+      }
+
+      // Claude/Gemini: store pending label for the SessionStart hook handler to apply
       pendingLabels.set(tmuxTarget, {
         label,
         project: project || undefined,

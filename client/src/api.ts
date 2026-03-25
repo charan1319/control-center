@@ -54,7 +54,7 @@ export const api = {
   // Sessions
   getSessions: () => fetchJson<Session[]>('/api/sessions'),
   getSession: (id: string) => fetchJson<Session>(`/api/sessions/${id}`),
-  patchSession: (id: string, data: Partial<Pick<Session, 'label' | 'tmux_target' | 'project' | 'pulse_enabled'>>) =>
+  patchSession: (id: string, data: Partial<Pick<Session, 'label' | 'tmux_target' | 'project' | 'pulse_enabled' | 'auto_approve'>>) =>
     patch<Session>(`/api/sessions/${id}`, data),
   launchSession: (data: { label?: string; cwd?: string; initialPrompt?: string; project?: string; cli_type?: string; skipPermissions?: boolean }) =>
     post<{ success: boolean; tmux_target: string }>('/api/sessions/launch', data),

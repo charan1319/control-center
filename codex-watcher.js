@@ -19,6 +19,28 @@ export function startWatching(sessionId, transcriptPath, onHeartbeat) {
       for (const line of buf.toString('utf8').split('\n').filter(Boolean)) {
         try {
           const entry = JSON.parse(line);
+
+          // Codex format: response_item with function_call or custom_tool_call
+          if (entry.type === 'response_item') {
+            const payload = entry.payload;
+            if (payload?.type === 'function_call') {
+              let filePath = null;
+              try {
+                const args = JSON.parse(payload.arguments || '{}');
+                filePath = args.file_path || args.path || null;
+              } catch { /* ignore */ }
+              onHeartbeat({ tool_name: payload.name, file_path: filePath });
+            } else if (payload?.type === 'custom_tool_call') {
+              let filePath = null;
+              if (payload.name === 'apply_patch' && payload.input) {
+                const match = payload.input.match(/\*\*\* (?:Add|Update|Delete) File: (.+)/);
+                if (match) filePath = match[1];
+              }
+              onHeartbeat({ tool_name: payload.name, file_path: filePath });
+            }
+          }
+
+          // Claude format: assistant message with tool_use blocks
           if (entry.type === 'assistant' && entry.message?.content) {
             for (const block of entry.message.content) {
               if (block.type === 'tool_use') {

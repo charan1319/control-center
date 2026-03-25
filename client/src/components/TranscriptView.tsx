@@ -454,22 +454,10 @@ function LiveStatus({ session, entries, hasQueuedInput, turnComplete }: { sessio
     );
   }
 
-  // Active/idle indicator — turnComplete is computed server-side from the
-  // full JSONL tail, so it works regardless of the entries read window.
-  // It's updated client-side as WS entries arrive.
+  // Active/idle indicator — turnComplete is the authoritative signal,
+  // computed server-side from the JSONL tail and updated via WS entries.
   if (statusClass === 'active' || statusClass === 'idle') {
-    if (hasQueuedInput) {
-      return (
-        <div className="tx-live-thinking">
-          <div className="tx-live-thinking-dots">
-            <span /><span /><span />
-          </div>
-          <span className="tx-live-thinking-text">Thinking...</span>
-        </div>
-      );
-    }
-
-    // Model's last turn is complete — not thinking
+    // Model's last turn is complete — not thinking.
     if (turnComplete) return null;
 
     // Model is working — check last entry for "Working" vs "Thinking" display
