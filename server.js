@@ -11,7 +11,7 @@ import config from './config.js';
 import * as db from './db.js';
 import * as ptyManager from './pty-manager.js';
 import * as snapshots from './snapshots.js';
-import { readTranscriptTail, getLastAssistantText, readTranscriptStructured, getTranscriptSize, isLastTurnComplete, isCodexFormat, parseCodexEntries } from './transcript.js';
+import { readTranscriptTail, getLastAssistantText, readTranscriptStructured, getTranscriptSize, isLastTurnComplete, isCodexFormat, parseCodexEntries, readContextUsage, extractContextUsage } from './transcript.js';
 import * as pulse from './pulse.js';
 import * as codexWatcher from './codex-watcher.js';
 
@@ -177,9 +177,9 @@ const EDIT_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 // Map Gemini CLI tool names to Claude Code equivalents for auto-approve matching
 const GEMINI_TOOL_MAP = { edit_file: 'Edit', write_file: 'Write', read_file: 'Read', shell: 'Bash', list_directory: 'LS', search_files: 'Grep', glob_tool: 'Glob' };
 
-// auto_approve DB values: 0 = none, 1 = full (config-driven), 2 = no-edits (all except file writes)
+// auto_approve DB values: 0 = none, 1 = full (approve everything), 2 = no-edits (all except file writes)
 function shouldAutoApprove(payload, session) {
-  const mode = session?.auto_approve ?? 1; // default: full
+  const mode = session?.auto_approve ?? 0; // default: none (safe — don't auto-approve unregistered sessions)
   if (mode === 0) return false;
 
   // Normalize Gemini tool names to Claude equivalents
@@ -189,23 +189,15 @@ function shouldAutoApprove(payload, session) {
   }
 
   if (mode === 2) {
-    // No-edits mode: approve everything the full mode would, except file-editing tools
+    // No-edits mode: approve everything except file-editing tools
     if (EDIT_TOOLS.has(toolName)) return false;
   }
 
-  // Full mode (mode === 1): use server-configured tool list + bash pattern
-  if (config.autoApproveTools.includes(toolName)) return true;
-
-  if (toolName === 'Bash' && config.autoApproveBashPattern) {
-    try {
-      const input = typeof payload.tool_input === 'string'
-        ? JSON.parse(payload.tool_input)
-        : (payload.tool_input || {});
-      const command = (input.command || input.cmd || '').trimStart();
-      if (command && new RegExp(config.autoApproveBashPattern).test(command)) return true;
-    } catch { /* ignore */ }
-  }
-  return false;
+  // Full mode (mode === 1): approve ALL tools unconditionally.
+  // Claude Code's own permission system already filters truly dangerous ops —
+  // only tools NOT pre-approved by the CLI reach this hook. If the user set
+  // "full auto" in the dashboard, they want everything approved.
+  return true;
 }
 
 function readProjects() {
@@ -434,15 +426,17 @@ export async function buildServer(opts = {}) {
         for (const file of files) {
           if (file.mtime < startTime - 5000) continue;
           try {
+            // Read enough to capture the full first line — Codex session_meta
+            // lines can be 15KB+ because they embed system instructions.
             const fd = openSync(file.path, 'r');
-            const buf = Buffer.alloc(1024);
-            const bytesRead = readSync(fd, buf, 0, 1024, 0);
+            const headBuf = Buffer.alloc(32_768);
+            const bytesRead = readSync(fd, headBuf, 0, 32_768, 0);
             closeSync(fd);
-            const firstLine = buf.toString('utf8', 0, bytesRead).split('\n')[0];
+            const firstLine = headBuf.toString('utf8', 0, bytesRead).split('\n')[0];
             const meta = JSON.parse(firstLine);
             if (meta.type === 'session_meta' && meta.payload?.cwd === cwd) {
               db.upsertSession({ session_id: sessionId, cwd, transcript: file.path, cli_type: 'codex' });
-              // Start watching for heartbeats
+              // Start watching for heartbeats and permission escalations
               codexWatcher.startWatching(sessionId, file.path, (hb) => {
                 db.upsertHeartbeat({ session_id: sessionId, tool_name: hb.tool_name });
                 if (hb.file_path) db.insertFileEdit(sessionId, hb.file_path, hb.tool_name);
@@ -450,6 +444,24 @@ export async function buildServer(opts = {}) {
                 if (cur?.status !== 'stopped') {
                   db.updateStatus(sessionId, 'active');
                   broadcastSessionUpdate(db.getSession(sessionId));
+                }
+              }, (perm) => {
+                if (perm.waiting) {
+                  db.updateStatus(sessionId, 'waiting_permission');
+                  db.setPendingPermission(sessionId, perm.tool_name || null, perm.tool_input || null);
+                  const updated = db.getSession(sessionId);
+                  if (updated) {
+                    broadcastSessionUpdate(updated);
+                    broadcastEvent({ session_id: sessionId, event: 'PermissionRequest', tool_name: perm.tool_name });
+                  }
+                } else {
+                  // Escalation resolved (approved or denied in TUI)
+                  const cur = db.getSession(sessionId);
+                  if (cur?.status === 'waiting_permission') {
+                    db.updateStatus(sessionId, 'active');
+                    db.clearPendingPermission(sessionId);
+                    broadcastSessionUpdate(db.getSession(sessionId));
+                  }
                 }
               });
               const updated = db.getSession(sessionId);
@@ -511,11 +523,25 @@ export async function buildServer(opts = {}) {
             const lines = buf.toString('utf8').split('\n');
             const entries = parseTranscriptLines(lines, false);
 
-            if (entries.length > 0) {
+            // Extract context usage from raw lines (needs full JSONL objects, not parsed entries)
+            const rawParsed = [];
+            for (const line of lines) {
+              const t = line.trim();
+              if (!t) continue;
+              try { rawParsed.push(JSON.parse(t)); } catch { /* skip */ }
+            }
+            const session = db.getSession(sessionId);
+            const contextUsage = extractContextUsage(rawParsed, session?.model);
+
+            if (entries.length > 0 || contextUsage) {
+              // Include authoritative turnComplete from file so client doesn't drift
+              const turnComplete = isLastTurnComplete(w.filePath);
               const msg = JSON.stringify({
                 type: 'transcript_update',
                 session_id: sessionId,
                 entries,
+                turnComplete,
+                ...(contextUsage ? { contextUsage } : {}),
               });
               for (const sub of w.subscribers) {
                 try { if (sub.readyState === 1) sub.send(msg); } catch { /* gone */ }
@@ -854,16 +880,16 @@ export async function buildServer(opts = {}) {
       fastify.log.debug(`[perm] session=${session_id.slice(0, 8)} tool=${payload.tool_name || '(none)'} mode=${sess?.auto_approve ?? 1} auto=${willAutoApprove}`);
       if (willAutoApprove) {
         autoApproved = true;
-        // Claude Code shows the TUI permission prompt AFTER the hook exits, so we
-        // can't paste immediately (the TUI isn't there yet). Schedule a delayed paste
-        // so "1\n" arrives once the TUI is visible.
+        // Two auto-approve mechanisms (belt and suspenders):
+        // 1. Return { auto_approve: true } so the hook script can output {"decision":"approve"}
+        // 2. Also send Enter to the tmux pane after a delay, in case the hook output
+        //    isn't consumed by the CLI (PermissionRequest hooks may be fire-and-forget)
         if (sess?.tmux_target && /^[a-zA-Z0-9_-]+$/.test(sess.tmux_target)) {
           const tmuxTarget = sess.tmux_target;
           setTimeout(() => {
             try {
-              // Permission prompt defaults to "Yes" — just press Enter to confirm
               execFileSync('tmux', ['send-keys', '-t', tmuxTarget, 'Enter'], { timeout: 5_000 });
-            } catch { /* tmux paste failed */ }
+            } catch { /* tmux pane may be gone */ }
           }, 800);
         }
       }
@@ -1004,7 +1030,7 @@ export async function buildServer(opts = {}) {
   // ──────────────────────────────────────────────
 
   fastify.post('/api/sessions/launch', async (request, reply) => {
-    const { label, cwd, initialPrompt, project, autoApprove, skipPermissions, cli_type } = request.body || {};
+    const { label, cwd, initialPrompt, project, autoApprove, cli_type } = request.body || {};
 
     // Input validation
     if (label && (typeof label !== 'string' || label.length > 256)) {
@@ -1039,7 +1065,6 @@ export async function buildServer(opts = {}) {
         label,
         cwd: cwd || process.env.HOME,
         initialPrompt: promptWithPulse,
-        skipPermissions: !!skipPermissions,
         cli_type: cli_type || 'claude',
       });
 
@@ -1268,7 +1293,8 @@ export async function buildServer(opts = {}) {
   fastify.get('/api/sessions/:id/transcript', async (request, reply) => {
     const session = db.getSession(request.params.id);
     if (!session) return reply.status(404).send({ error: 'Session not found' });
-    if (!session.transcript) return reply.status(404).send({ error: 'No transcript' });
+    // Transcript may not exist yet (e.g. Codex sessions where discovery is still polling)
+    if (!session.transcript) return { entries: [], hasMore: false, turnComplete: true };
 
     const limit = clampInt(request.query.limit, 100, 1, 1000);
     const before = request.query.before || null;
@@ -1296,8 +1322,9 @@ export async function buildServer(opts = {}) {
     // Independent of the entries read window, so it works even when
     // end_turn is outside the maxBytes window.
     const turnComplete = isLastTurnComplete(session.transcript);
+    const contextUsage = readContextUsage(session.transcript, session.model);
 
-    return { entries, hasMore, turnComplete };
+    return { entries, hasMore, turnComplete, contextUsage };
   });
 
   // ──────────────────────────────────────────────
@@ -1566,8 +1593,6 @@ export async function buildServer(opts = {}) {
       return reply.status(400).send({ error: 'Cannot determine CWD for project. Add it to project presets.' });
     }
 
-    const { skipPermissions } = request.body || {};
-
     // Build launch prompt
     let initialPrompt = `You are a skilled software engineer working on the "${todo.project}" project.
 You have been assigned a specific task to complete.
@@ -1600,7 +1625,6 @@ Begin by reading CLAUDE.md and the relevant source files, then present your impl
         label: todo.title,
         cwd,
         initialPrompt,
-        skipPermissions: !!skipPermissions,
       });
 
       // Start headless PTY capture immediately
@@ -1668,6 +1692,39 @@ Begin by reading CLAUDE.md and the relevant source files, then present your impl
     }
   });
 
+  // ──────────────────────────────────────────────
+  // Transcript-based activity detection
+  // Polls transcript file mtimes every 1s to catch activity from tools that
+  // don't fire PostToolUse heartbeats (Read, Grep, Glob, etc.).
+  // ──────────────────────────────────────────────
+  const transcriptMtimes = new Map(); // session_id → last known mtimeMs
+  const activityTimer = setInterval(() => {
+    const sessions = db.getActiveSessions();
+    for (const session of sessions) {
+      if (!session.transcript) continue;
+      let mtimeMs;
+      try { mtimeMs = statSync(session.transcript).mtimeMs; } catch { continue; }
+
+      const prevMtime = transcriptMtimes.get(session.session_id);
+      transcriptMtimes.set(session.session_id, mtimeMs);
+
+      // Skip if file hasn't changed since last check
+      if (prevMtime && mtimeMs <= prevMtime) continue;
+
+      // Skip if existing heartbeat is already fresh (< 5s old)
+      if (session.last_heartbeat) {
+        const hbStr = session.last_heartbeat.includes('T') ? session.last_heartbeat : session.last_heartbeat.replace(' ', 'T') + 'Z';
+        const hbAge = (Date.now() - new Date(hbStr).getTime()) / 1000;
+        if (hbAge < 5) continue;
+      }
+
+      const now = new Date().toISOString();
+      db.upsertHeartbeat({ session_id: session.session_id, tool_name: session.last_tool || 'unknown' });
+      broadcastEvent({ event: 'Heartbeat', session_id: session.session_id, tool_name: session.last_tool || null, timestamp: now });
+    }
+  }, 1000);
+  activityTimer.unref(); // Don't keep process alive (for tests)
+
   return fastify;
 }
 
@@ -1690,12 +1747,19 @@ if (isMainModule) {
   // Auto-cleanup: delete stopped sessions older than configured days
   if (config.sessionCleanupDays > 0) {
     const runCleanup = () => {
-      const result = db.deleteStoppedSessionsOlderThan(config.sessionCleanupDays);
-      if (result.changes > 0) {
-        console.log(`[cleanup] Deleted ${result.changes} stopped session(s) older than ${config.sessionCleanupDays} days`);
-        // Cascade: clean up orphaned rows from related tables
-        db.default.prepare('DELETE FROM file_edits WHERE session_id NOT IN (SELECT session_id FROM sessions)').run();
-        db.default.prepare('DELETE FROM todos WHERE session_id IS NOT NULL AND session_id NOT IN (SELECT session_id FROM sessions)').run();
+      try {
+        // Delete dependent rows FIRST to avoid FK constraint failures
+        const staleFilter = `session_id IN (SELECT session_id FROM sessions WHERE status = 'stopped' AND updated_at < datetime('now', '-${config.sessionCleanupDays} days'))`;
+        db.default.prepare(`DELETE FROM events WHERE ${staleFilter}`).run();
+        db.default.prepare(`DELETE FROM heartbeats WHERE ${staleFilter}`).run();
+        db.default.prepare(`DELETE FROM file_edits WHERE ${staleFilter}`).run();
+        db.default.prepare(`DELETE FROM todos WHERE session_id IS NOT NULL AND ${staleFilter}`).run();
+        const result = db.deleteStoppedSessionsOlderThan(config.sessionCleanupDays);
+        if (result.changes > 0) {
+          console.log(`[cleanup] Deleted ${result.changes} stopped session(s) older than ${config.sessionCleanupDays} days`);
+        }
+      } catch (err) {
+        console.warn('[cleanup] Session cleanup failed:', err.message);
       }
     };
     runCleanup(); // run once on startup

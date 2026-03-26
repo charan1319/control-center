@@ -85,6 +85,10 @@ describe('Integration: Full session lifecycle', () => {
   });
 
   it('step 3: PermissionRequest changes status to waiting_permission', async () => {
+    // Disable auto-approve so the PermissionRequest actually sets waiting_permission
+    const { updateSession } = await import('../db.js');
+    updateSession(sessionId, { auto_approve: 0 });
+
     const res = await injectHook({
       event: 'PermissionRequest',
       session_id: sessionId,
@@ -687,6 +691,10 @@ describe('Integration: Heartbeat status transitions', () => {
   it('heartbeat after PermissionRequest does NOT clear waiting_permission', async () => {
     const sid = 'heartbeat-perm-test';
     await injectHook({ event: 'SessionStart', session_id: sid, cwd: '/tmp/hp' });
+
+    // Disable auto-approve so PermissionRequest sets waiting_permission
+    const { updateSession } = await import('../db.js');
+    updateSession(sid, { auto_approve: 0 });
 
     // Permission request
     await injectHook({

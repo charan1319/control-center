@@ -59,6 +59,96 @@ function formatInline(text: string): string {
   return result;
 }
 
+// ─── Diff rendering for edit tools ───
+
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+
+function computeLineDiff(oldStr: string, newStr: string): { type: 'context' | 'add' | 'remove'; text: string }[] {
+  const oldLines = oldStr.split('\n');
+  const newLines = newStr.split('\n');
+
+  // Find common prefix lines
+  let prefixLen = 0;
+  while (prefixLen < oldLines.length && prefixLen < newLines.length && oldLines[prefixLen] === newLines[prefixLen]) {
+    prefixLen++;
+  }
+
+  // Find common suffix lines (don't overlap with prefix)
+  let suffixLen = 0;
+  while (
+    suffixLen < oldLines.length - prefixLen &&
+    suffixLen < newLines.length - prefixLen &&
+    oldLines[oldLines.length - 1 - suffixLen] === newLines[newLines.length - 1 - suffixLen]
+  ) {
+    suffixLen++;
+  }
+
+  const result: { type: 'context' | 'add' | 'remove'; text: string }[] = [];
+
+  for (let i = 0; i < prefixLen; i++) result.push({ type: 'context', text: oldLines[i] });
+  for (let i = prefixLen; i < oldLines.length - suffixLen; i++) result.push({ type: 'remove', text: oldLines[i] });
+  for (let i = prefixLen; i < newLines.length - suffixLen; i++) result.push({ type: 'add', text: newLines[i] });
+  for (let i = oldLines.length - suffixLen; i < oldLines.length; i++) result.push({ type: 'context', text: oldLines[i] });
+
+  return result;
+}
+
+function DiffLines({ lines }: { lines: { type: 'context' | 'add' | 'remove'; text: string }[] }) {
+  return (
+    <div className="tx-diff">
+      {lines.map((d, i) => (
+        <div key={i} className={`tx-diff-line tx-diff-${d.type}`}>
+          <span className="tx-diff-prefix">{d.type === 'add' ? '+' : d.type === 'remove' ? '-' : ' '}</span>
+          <span className="tx-diff-text">{d.text || '\u00a0'}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function renderEditBody(toolInputFull: string, toolName: string) {
+  try {
+    const input = JSON.parse(toolInputFull);
+
+    if (toolName === 'Write') {
+      const content = input.content || '';
+      const lines = content.split('\n').map((text: string) => ({ type: 'add' as const, text }));
+      return <DiffLines lines={lines} />;
+    }
+
+    if (toolName === 'Edit') {
+      const diff = computeLineDiff(input.old_string || '', input.new_string || '');
+      return <DiffLines lines={diff} />;
+    }
+
+    if (toolName === 'MultiEdit' && Array.isArray(input.edits)) {
+      return (
+        <div className="tx-diff">
+          {input.edits.map((edit: { old_string?: string; new_string?: string }, ei: number) => {
+            const diff = computeLineDiff(edit.old_string || '', edit.new_string || '');
+            return (
+              <div key={ei}>
+                {ei > 0 && <div className="tx-diff-separator">{'\u00b7\u00b7\u00b7'}</div>}
+                {diff.map((d, i) => (
+                  <div key={i} className={`tx-diff-line tx-diff-${d.type}`}>
+                    <span className="tx-diff-prefix">{d.type === 'add' ? '+' : d.type === 'remove' ? '-' : ' '}</span>
+                    <span className="tx-diff-text">{d.text || '\u00a0'}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // Fallback for NotebookEdit or unexpected shapes
+    return <pre>{toolInputFull}</pre>;
+  } catch {
+    return <pre>{toolInputFull}</pre>;
+  }
+}
+
 // ─── Entry rendering ───
 
 interface PairedEntry {
@@ -141,7 +231,10 @@ function renderEntry({ entry, result }: PairedEntry, index: number) {
           </summary>
           {entry.tool_input_full && (
             <div className="tx-tool-body">
-              <pre>{safeString(entry.tool_input_full)}</pre>
+              {EDIT_TOOLS.has(entry.tool_name || '')
+                ? renderEditBody(entry.tool_input_full, entry.tool_name || '')
+                : <pre>{safeString(entry.tool_input_full)}</pre>
+              }
             </div>
           )}
           {result ? (
@@ -371,11 +464,7 @@ export function TranscriptView({ sessionId, session, queuedMessages }: Transcrip
     );
   }
 
-  if (entries.length === 0) {
-    return <div className="transcript-empty">No transcript entries yet</div>;
-  }
-
-  const paired = pairEntries(entries);
+  const paired = entries.length > 0 ? pairEntries(entries) : [];
 
   return (
     <>
@@ -388,6 +477,10 @@ export function TranscriptView({ sessionId, session, queuedMessages }: Transcrip
           <div className="transcript-top-loader">
             <div className="transcript-top-spinner" />
           </div>
+        )}
+
+        {paired.length === 0 && !session?.status?.startsWith('waiting') && (
+          <div className="transcript-empty-inline">No transcript entries yet</div>
         )}
 
         {paired.map((p, i) => renderEntry(p, i))}
@@ -454,9 +547,11 @@ function LiveStatus({ session, entries, hasQueuedInput, turnComplete }: { sessio
     );
   }
 
-  // Active/idle indicator — turnComplete is the authoritative signal,
+  // Active indicator — turnComplete is the authoritative signal,
   // computed server-side from the JSONL tail and updated via WS entries.
-  if (statusClass === 'active' || statusClass === 'idle') {
+  // Only show for 'active' sessions (recent heartbeat). Idle sessions
+  // have no heartbeat for >120s, meaning no tool use — not actively working.
+  if (statusClass === 'active') {
     // Model's last turn is complete — not thinking.
     if (turnComplete) return null;
 

@@ -1,5 +1,5 @@
 import type {
-  Session, SessionEvent, TranscriptEntry, FileEdit,
+  Session, SessionEvent, TranscriptEntry, ContextUsage, FileEdit,
   Todo, PulseDocument, ProjectPreset, SessionTemplate,
   ServerInfo, VersionInfo, Stats,
 } from './types';
@@ -56,7 +56,7 @@ export const api = {
   getSession: (id: string) => fetchJson<Session>(`/api/sessions/${id}`),
   patchSession: (id: string, data: Partial<Pick<Session, 'label' | 'tmux_target' | 'project' | 'pulse_enabled' | 'auto_approve'>>) =>
     patch<Session>(`/api/sessions/${id}`, data),
-  launchSession: (data: { label?: string; cwd?: string; initialPrompt?: string; project?: string; cli_type?: string; skipPermissions?: boolean }) =>
+  launchSession: (data: { label?: string; cwd?: string; initialPrompt?: string; project?: string; cli_type?: string }) =>
     post<{ success: boolean; tmux_target: string }>('/api/sessions/launch', data),
   sendInput: (id: string, text: string) =>
     post<{ ok: boolean }>(`/api/sessions/${id}/input`, { text }),
@@ -73,7 +73,7 @@ export const api = {
     if (limit) params.set('limit', String(limit));
     if (before) params.set('before', before);
     const qs = params.toString();
-    return fetchJson<{ entries: TranscriptEntry[]; hasMore: boolean; turnComplete?: boolean }>(`/api/sessions/${id}/transcript${qs ? '?' + qs : ''}`);
+    return fetchJson<{ entries: TranscriptEntry[]; hasMore: boolean; turnComplete?: boolean; contextUsage?: ContextUsage }>(`/api/sessions/${id}/transcript${qs ? '?' + qs : ''}`);
   },
   getSessionFiles: (id: string) =>
     fetchJson<{ files: FileEdit[] }>(`/api/sessions/${id}/files`),
@@ -134,8 +134,8 @@ export const api = {
     patch<{ ok: boolean }>(`/api/todos/${id}`, data),
   deleteTodo: (id: number) =>
     del<{ ok: boolean }>(`/api/todos/${id}`),
-  launchTodo: (id: number, skipPermissions?: boolean) =>
-    post<{ success: boolean; tmux_target: string; todo_id: number }>(`/api/todos/${id}/launch`, { skipPermissions }),
+  launchTodo: (id: number) =>
+    post<{ success: boolean; tmux_target: string; todo_id: number }>(`/api/todos/${id}/launch`, {}),
 
   // Push notifications
   getVapidKey: () => fetchJson<{ publicKey: string; enabled: boolean }>('/api/push/vapid-public-key'),

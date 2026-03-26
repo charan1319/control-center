@@ -1,12 +1,13 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { getStatusClass } from '../utils';
 import { api } from '../api';
 import { useToast } from './Toast';
+import { useWebSocket } from '../hooks/useWebSocket';
 import { TranscriptView } from './TranscriptView';
 import type { QueuedMessage } from './TranscriptView';
 import { TerminalView } from './TerminalView';
 import { InputBar } from './InputBar';
-import type { Session } from '../types';
+import type { Session, ContextUsage } from '../types';
 import './SessionDetail.css';
 
 interface SessionDetailProps {
@@ -16,14 +17,36 @@ interface SessionDetailProps {
 
 type TabId = 'transcript' | 'terminal';
 
+function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return String(n);
+}
+
 export function SessionDetail({ session, onClose }: SessionDetailProps) {
   const { showToast } = useToast();
+  const { transcriptVersion, getLatestContextUsage } = useWebSocket();
   const hasTmux = !!session.tmux_target;
   const [activeTab, setActiveTab] = useState<TabId>('transcript');
   const terminalWsRef = useRef<WebSocket | null>(null);
   const [, forceUpdate] = useState(0);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const nextQueueId = useRef(0);
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+
+  // Fetch initial context usage
+  useEffect(() => {
+    setContextUsage(null);
+    api.getTranscript(session.session_id, 1).then(data => {
+      if (data.contextUsage) setContextUsage(data.contextUsage);
+    }).catch(() => {});
+  }, [session.session_id]);
+
+  // Update from WS
+  useEffect(() => {
+    const latest = getLatestContextUsage(session.session_id);
+    if (latest) setContextUsage(latest);
+  }, [session.session_id, transcriptVersion, getLatestContextUsage]);
 
   const handleSendMessage = useCallback(async (text: string) => {
     const id = nextQueueId.current++;
@@ -118,6 +141,9 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
             <option value={1}>Full auto</option>
           </select>
         )}
+        {contextUsage && (
+          <ContextMeter usage={contextUsage} />
+        )}
       </div>
 
       {/* Content */}
@@ -147,6 +173,35 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
           onSendMessage={handleSendMessage}
         />
       )}
+    </div>
+  );
+}
+
+function ContextMeter({ usage }: { usage: ContextUsage }) {
+  const { used, contextWindow } = usage;
+  if (!contextWindow) {
+    // No known window (e.g. unknown model) — just show used tokens
+    return (
+      <div className="sd-context-meter" title={`${used.toLocaleString()} input tokens used`}>
+        <span className="sd-context-text">{formatTokenCount(used)}</span>
+      </div>
+    );
+  }
+
+  const pct = Math.min((used / contextWindow) * 100, 100);
+  const barColor = pct > 80 ? 'var(--color-warning)' : pct > 50 ? 'var(--ctp-yellow)' : 'var(--color-success)';
+
+  return (
+    <div
+      className="sd-context-meter"
+      title={`${used.toLocaleString()} / ${contextWindow.toLocaleString()} tokens (${pct.toFixed(1)}%)`}
+    >
+      <span className="sd-context-text">
+        {formatTokenCount(used)}<span className="sd-context-sep">/</span>{formatTokenCount(contextWindow)}
+      </span>
+      <div className="sd-context-bar">
+        <div className="sd-context-fill" style={{ width: `${pct}%`, background: barColor }} />
+      </div>
     </div>
   );
 }

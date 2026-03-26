@@ -36,5 +36,22 @@ PAYLOAD=$(echo "$INPUT" | jq -c \
     tmux_session: (if $tmux_session != "" then $tmux_session else null end)
   }') || { echo "gc-report: jq parse failed" >&2; exit 0; }
 
-curl -sS --max-time 5 -X POST "$CC_SERVER/api/hooks" \
-  -H "Content-Type: application/json" -d "$PAYLOAD" > /dev/null 2>&1 || true
+# Post to server with retry logic — PermissionRequest events are critical
+RESPONSE=""
+MAX_ATTEMPTS=3
+for attempt in $(seq 1 $MAX_ATTEMPTS); do
+  RESPONSE=$(curl -sS --max-time 10 -X POST "$CC_SERVER/api/hooks" \
+    -H "Content-Type: application/json" -d "$PAYLOAD" 2>/dev/null) && break
+  if [ "$CC_EVENT" != "PermissionRequest" ] || [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
+    exit 0
+  fi
+  sleep 2
+done
+
+# For BeforeTool (mapped to PermissionRequest): communicate auto-approve decision
+if [ "$CC_EVENT" = "PermissionRequest" ]; then
+  AUTO=$(echo "$RESPONSE" | jq -r '.auto_approve' 2>/dev/null || true)
+  if [ "$AUTO" = "true" ]; then
+    echo '{"decision":"approve"}'
+  fi
+fi

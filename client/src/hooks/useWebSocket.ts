@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import React from 'react';
-import type { Session, SessionEvent, TranscriptEntry, WSIncoming, WSOutgoing } from '../types';
+import type { Session, SessionEvent, TranscriptEntry, ContextUsage, WSIncoming, WSOutgoing } from '../types';
+import { api } from '../api';
 
 export interface TodoStopEvent {
   todo_id: number;
@@ -14,8 +15,11 @@ interface WebSocketState {
   sendMessage: (msg: WSOutgoing) => void;
   transcriptVersion: number;
   getTranscriptUpdates: (sessionId: string) => TranscriptEntry[][];
+  getLatestContextUsage: (sessionId: string) => ContextUsage | null;
+  getServerTurnComplete: (sessionId: string) => boolean | null;
   todoStopVersion: number;
   getTodoStopEvents: () => TodoStopEvent[];
+  refreshSession: (sessionId: string) => void;
 }
 
 const WebSocketContext = createContext<WebSocketState | null>(null);
@@ -37,12 +41,24 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const reconnectDelay = useRef(1000);
   const wasConnected = useRef(false);
   const transcriptUpdates = useRef(new Map<string, TranscriptEntry[][]>());
+  const contextUsageMap = useRef(new Map<string, ContextUsage>());
+  const turnCompleteMap = useRef(new Map<string, boolean>());
   const todoStopEvents = useRef<TodoStopEvent[]>([]);
 
   const getTranscriptUpdates = useCallback((sessionId: string): TranscriptEntry[][] => {
     const updates = transcriptUpdates.current.get(sessionId) || [];
     transcriptUpdates.current.delete(sessionId);
     return updates;
+  }, []);
+
+  const getLatestContextUsage = useCallback((sessionId: string): ContextUsage | null => {
+    return contextUsageMap.current.get(sessionId) || null;
+  }, []);
+
+  const getServerTurnComplete = useCallback((sessionId: string): boolean | null => {
+    const val = turnCompleteMap.current.get(sessionId);
+    turnCompleteMap.current.delete(sessionId);
+    return val ?? null;
   }, []);
 
   const getTodoStopEvents = useCallback((): TodoStopEvent[] => {
@@ -55,6 +71,24 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg));
     }
+  }, []);
+
+  // Fetch a single session from REST API and merge into state.
+  // Safety net for missed WS broadcasts (e.g. permission requests).
+  const refreshSession = useCallback((sessionId: string) => {
+    api.getSession(sessionId).then((session: Session) => {
+      setSessions(prev => {
+        const idx = prev.findIndex(s => s.session_id === sessionId);
+        if (idx >= 0) {
+          // Only update if status actually changed (avoid unnecessary re-renders)
+          if (prev[idx].status === session.status && prev[idx].pending_tool === session.pending_tool) return prev;
+          const next = [...prev];
+          next[idx] = session;
+          return next;
+        }
+        return prev;
+      });
+    }).catch(() => { /* session may have been deleted */ });
   }, []);
 
   useEffect(() => {
@@ -126,6 +160,12 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
             const existing = transcriptUpdates.current.get(msg.session_id) || [];
             existing.push(msg.entries);
             transcriptUpdates.current.set(msg.session_id, existing);
+            if (msg.contextUsage) {
+              contextUsageMap.current.set(msg.session_id, msg.contextUsage);
+            }
+            if (msg.turnComplete !== undefined) {
+              turnCompleteMap.current.set(msg.session_id, msg.turnComplete);
+            }
             setTranscriptVersion(v => v + 1);
             break;
           }
@@ -171,8 +211,11 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     sendMessage,
     transcriptVersion,
     getTranscriptUpdates,
+    getLatestContextUsage,
+    getServerTurnComplete,
     todoStopVersion,
     getTodoStopEvents,
+    refreshSession,
   };
 
   return React.createElement(WebSocketContext.Provider, { value }, children);

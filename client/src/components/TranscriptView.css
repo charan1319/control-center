@@ -292,6 +292,67 @@
   overflow-y: auto;
 }
 
+/* ─── Diff view for edit tools ─── */
+.tx-diff {
+  font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.tx-diff-line {
+  display: flex;
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding: 0 4px;
+}
+
+.tx-diff-prefix {
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+  user-select: none;
+}
+
+.tx-diff-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.tx-diff-add {
+  background: color-mix(in srgb, var(--ctp-green) 12%, transparent);
+  color: var(--ctp-green);
+}
+
+.tx-diff-add .tx-diff-prefix {
+  color: var(--ctp-green);
+}
+
+.tx-diff-remove {
+  background: color-mix(in srgb, var(--ctp-red) 12%, transparent);
+  color: var(--ctp-red);
+}
+
+.tx-diff-remove .tx-diff-prefix {
+  color: var(--ctp-red);
+}
+
+.tx-diff-context {
+  color: var(--ctp-subtext0);
+}
+
+.tx-diff-context .tx-diff-prefix {
+  color: var(--ctp-overlay0);
+}
+
+.tx-diff-separator {
+  text-align: center;
+  color: var(--ctp-surface2);
+  padding: 2px 0;
+  font-size: 11px;
+}
+
 /* ─── Tool result ─── */
 .tx-tool-result {
   padding: 6px 12px;
@@ -433,6 +494,13 @@
   justify-content: center;
   color: var(--color-muted);
   font-size: 13px;
+}
+
+.transcript-empty-inline {
+  padding: 24px 16px;
+  color: var(--color-muted);
+  font-size: 13px;
+  text-align: center;
 }
 
 /* ─── Error state ─── */

@@ -15,7 +15,6 @@ export function TodoItem({ todo, onRefresh, sessionStopped }: TodoItemProps) {
   const [expanded, setExpanded] = useState(false);
   const [details, setDetails] = useState(todo.details || '');
   const [showLaunchPopover, setShowLaunchPopover] = useState(false);
-  const [skipPermissions, setSkipPermissions] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showDoneConfirm, setShowDoneConfirm] = useState(false);
   const [stoppedDismissed, setStoppedDismissed] = useState(false);
@@ -34,17 +33,16 @@ export function TodoItem({ todo, onRefresh, sessionStopped }: TodoItemProps) {
   const handleLaunch = useCallback(async () => {
     setBusy(true);
     try {
-      await api.launchTodo(todo.id, skipPermissions);
+      await api.launchTodo(todo.id);
       showToast(`Launched: ${todo.title}`, 'success');
       setShowLaunchPopover(false);
-      setSkipPermissions(false);
       onRefresh();
     } catch (err) {
       showToast(`Launch failed: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error');
     } finally {
       setBusy(false);
     }
-  }, [todo.id, todo.title, skipPermissions, showToast, onRefresh]);
+  }, [todo.id, todo.title, showToast, onRefresh]);
 
   const handleMarkDone = useCallback(async () => {
     setBusy(true);
@@ -161,14 +159,6 @@ export function TodoItem({ todo, onRefresh, sessionStopped }: TodoItemProps) {
 
       {showLaunchPopover && (
         <div className="todo-launch-popover">
-          <label>
-            <input
-              type="checkbox"
-              checked={skipPermissions}
-              onChange={e => setSkipPermissions(e.target.checked)}
-            />
-            Skip permissions
-          </label>
           <div className="todo-launch-popover-actions">
             <button
               className="btn-confirm-launch"
@@ -177,7 +167,7 @@ export function TodoItem({ todo, onRefresh, sessionStopped }: TodoItemProps) {
             >
               {busy ? 'Launching...' : 'Launch'}
             </button>
-            <button onClick={() => { setShowLaunchPopover(false); setSkipPermissions(false); }}>
+            <button onClick={() => setShowLaunchPopover(false)}>
               Cancel
             </button>
           </div>

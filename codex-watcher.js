@@ -2,10 +2,13 @@ import { watch, statSync, openSync, readSync, closeSync } from 'node:fs';
 
 const activeWatchers = new Map();
 
-export function startWatching(sessionId, transcriptPath, onHeartbeat) {
+export function startWatching(sessionId, transcriptPath, onHeartbeat, onPermission) {
   if (!transcriptPath || activeWatchers.has(sessionId)) return;
   let lastSize = 0;
   try { lastSize = statSync(transcriptPath).size; } catch { return; }
+
+  // Track call_ids of escalation requests so we can detect when they resolve
+  const pendingEscalations = new Set();
 
   const checkNewContent = () => {
     try {
@@ -25,11 +28,34 @@ export function startWatching(sessionId, transcriptPath, onHeartbeat) {
             const payload = entry.payload;
             if (payload?.type === 'function_call') {
               let filePath = null;
+              let args = {};
               try {
-                const args = JSON.parse(payload.arguments || '{}');
+                args = JSON.parse(payload.arguments || '{}');
                 filePath = args.file_path || args.path || null;
               } catch { /* ignore */ }
+
+              // Detect escalation requests (permission prompts)
+              if (args.sandbox_permissions === 'require_escalated' && onPermission) {
+                pendingEscalations.add(payload.call_id || payload.name);
+                onPermission({
+                  waiting: true,
+                  tool_name: payload.name,
+                  tool_input: args.cmd || payload.arguments,
+                });
+              }
+
               onHeartbeat({ tool_name: payload.name, file_path: filePath });
+            } else if (payload?.type === 'function_call_output') {
+              // Escalation resolved — the user approved (or denied) in the TUI
+              if (pendingEscalations.size > 0 && onPermission) {
+                const callId = payload.call_id || '';
+                if (pendingEscalations.has(callId) || pendingEscalations.size > 0) {
+                  pendingEscalations.delete(callId);
+                  if (pendingEscalations.size === 0) {
+                    onPermission({ waiting: false });
+                  }
+                }
+              }
             } else if (payload?.type === 'custom_tool_call') {
               let filePath = null;
               if (payload.name === 'apply_patch' && payload.input) {

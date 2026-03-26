@@ -76,6 +76,10 @@ describe('POST /api/hooks', () => {
       payload: { event: 'SessionStart', session_id: 'test-1', cwd: '/tmp/proj', tmux_session: 'cc-test' },
     });
 
+    // Disable auto-approve so PermissionRequest actually sets waiting_permission
+    const { updateSession } = await import('../db.js');
+    updateSession('test-1', { auto_approve: 0 });
+
     await app.inject({
       method: 'POST',
       url: '/api/hooks',
@@ -260,7 +264,7 @@ describe('GET /api/sessions/:id/transcript', () => {
     assert.ok(entries.length <= 2);
   });
 
-  it('returns 404 for session without transcript', async () => {
+  it('returns empty entries for session without transcript', async () => {
     // Create a session without a transcript path
     await app.inject({
       method: 'POST',
@@ -273,7 +277,11 @@ describe('GET /api/sessions/:id/transcript', () => {
       },
     });
     const res = await app.inject({ method: 'GET', url: '/api/sessions/no-transcript-session/transcript' });
-    assert.equal(res.statusCode, 404);
+    assert.equal(res.statusCode, 200);
+    const data = res.json();
+    assert.deepStrictEqual(data.entries, []);
+    assert.equal(data.hasMore, false);
+    assert.equal(data.turnComplete, true);
   });
 });
 
@@ -736,7 +744,11 @@ describe('Multi-CLI support (cli_type)', () => {
     assert.notEqual(sessionRes.json().status, 'waiting_permission');
   });
 
-  it('Gemini write_file is NOT auto-approved (maps to Write, not in safe list)', async () => {
+  it('Gemini write_file is NOT auto-approved in no-edits mode (maps to Write)', async () => {
+    // Set session to no-edits mode (mode 2) — write_file maps to Write which is blocked
+    const { updateSession } = await import('../db.js');
+    updateSession('gemini-test-1', { auto_approve: 2 });
+
     const res = await app.inject({
       method: 'POST',
       url: '/api/hooks',

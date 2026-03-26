@@ -63,6 +63,12 @@ export interface TranscriptEntry {
   stop_reason?: string;
 }
 
+export interface ContextUsage {
+  used: number;
+  output: number;
+  contextWindow: number | null;
+}
+
 export interface Todo {
   id: number;
   project: string;
@@ -122,7 +128,7 @@ export type WSIncoming =
   | { type: 'init'; sessions: Session[]; recentEvents: SessionEvent[] }
   | { type: 'session_update'; session: Session }
   | { type: 'event'; event: string; session_id: string; tool_name?: string; tool_input?: string; timestamp?: string; auto_approved?: boolean }
-  | { type: 'transcript_update'; session_id: string; entries: TranscriptEntry[] }
+  | { type: 'transcript_update'; session_id: string; entries: TranscriptEntry[]; turnComplete?: boolean; contextUsage?: ContextUsage }
   | { type: 'todo_session_stopped'; todo_id: number; session_id: string };
 
 export type WSOutgoing =

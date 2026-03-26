@@ -257,7 +257,7 @@ export function listTmuxSessions() {
  * the Claude Code TUI time to initialize. It may fail silently if the TUI
  * isn't ready. The session is still created and usable either way.
  */
-export function createTmuxSession({ label, cwd, initialPrompt, skipPermissions = false, cli_type = 'claude' }) {
+export function createTmuxSession({ label, cwd, initialPrompt, cli_type = 'claude' }) {
   const existing = listTmuxSessions().map(s => s.name);
   let n = 0;
   while (existing.includes(`${config.tmuxSessionPrefix}${n}`)) n++;
@@ -274,23 +274,34 @@ export function createTmuxSession({ label, cwd, initialPrompt, skipPermissions =
   execFileSync('tmux', args, { timeout: TMUX_TIMEOUT_MS });
 
   // Build CLI command based on cli_type
+  // Permission bypass flags removed — use Claude Code's built-in auto mode (Shift+Tab) instead.
   let cliCmd;
+  let promptIncludedInCmd = false;
   switch (cli_type) {
     case 'gemini':
-      cliCmd = skipPermissions ? 'gemini --yolo' : 'gemini';
+      cliCmd = 'gemini';
       break;
     case 'codex':
-      cliCmd = skipPermissions ? 'codex --full-auto' : 'codex';
+      // Codex accepts the prompt as a positional CLI argument.
+      // Its Rust TUI doesn't accept pasted text via tmux paste-buffer,
+      // so the prompt must be passed on the command line.
+      if (initialPrompt) {
+        const escaped = initialPrompt.replace(/'/g, "'\\''");
+        cliCmd = `codex '${escaped}'`;
+        promptIncludedInCmd = true;
+      } else {
+        cliCmd = 'codex';
+      }
       break;
     case 'claude':
     default:
-      cliCmd = skipPermissions ? 'claude --dangerously-skip-permissions' : 'claude';
+      cliCmd = 'claude';
   }
   execFileSync('tmux', ['send-keys', '-t', sessionName, cliCmd, 'Enter'], { timeout: TMUX_TIMEOUT_MS });
 
-  // If there's an initial prompt, wait for Claude Code TUI to initialize then send it.
-  // Uses sendPrompt which paste-buffers the text then sends Enter after a delay.
-  if (initialPrompt) {
+  // If there's an initial prompt and it wasn't already passed as a CLI argument,
+  // wait for the TUI to initialize then paste it in.
+  if (initialPrompt && !promptIncludedInCmd) {
     // 8s delay: Claude Code TUI typically needs 5-8s to initialize after launch.
     // sendPrompt adds its own internal delays for paste processing + Enter.
     setTimeout(() => sendPrompt(sessionName, initialPrompt), 8000);

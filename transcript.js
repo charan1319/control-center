@@ -453,9 +453,16 @@ export function isLastTurnComplete(filePath, maxBytes = 262144) {
         } else if (obj.type === 'user') {
           const content = obj.message?.content;
           if (typeof content === 'string') {
-            lastInput = idx;
+            // Skip system-injected entries (local commands, context tags, etc.)
+            if (!classifySystemInjection(content, null)) lastInput = idx;
           } else if (Array.isArray(content)) {
-            if (content.some(b => b.type === 'tool_result' || b.type === 'text')) lastInput = idx;
+            if (content.some(b => b.type === 'tool_result')) lastInput = idx;
+            else if (content.some(b => b.type === 'text')) {
+              // Skip if ALL text blocks are system injections
+              const texts = content.filter(b => b.type === 'text');
+              const allSystem = texts.length > 0 && texts.every(b => classifySystemInjection(b.text || '', null));
+              if (!allSystem) lastInput = idx;
+            }
           }
         } else if (obj.type === 'tool_result') {
           lastInput = idx;
@@ -470,6 +477,101 @@ export function isLastTurnComplete(filePath, maxBytes = 262144) {
       closeSync(fd);
     }
   } catch { return true; }
+}
+
+/**
+ * Read the latest context usage from a JSONL transcript file.
+ * Supports both Claude (message.usage on assistant entries) and
+ * Codex (event_msg with payload.type === 'token_count').
+ *
+ * Returns { used, output, contextWindow } or null if unavailable.
+ *   used = total input tokens (context fill)
+ *   output = output tokens for the latest turn
+ *   contextWindow = max context size (from model or Codex metadata)
+ */
+export function readContextUsage(filePath, model) {
+  if (!filePath || !existsSync(filePath)) return null;
+  try {
+    const fd = openSync(filePath, 'r');
+    try {
+      const { size } = fstatSync(fd);
+      if (size === 0) return null;
+      const readSize = Math.min(32768, size);
+      const buf = Buffer.allocUnsafe(readSize);
+      readSync(fd, buf, 0, readSize, size - readSize);
+      const lines = buf.toString('utf8').split('\n');
+      const startIdx = size > readSize ? 1 : 0;
+
+      let result = null;
+
+      for (let i = startIdx; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        let obj;
+        try { obj = JSON.parse(line); } catch { continue; }
+
+        // Claude: assistant entries with message.usage
+        if (obj.type === 'assistant' && obj.message?.usage) {
+          const u = obj.message.usage;
+          const used = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+          result = {
+            used,
+            output: u.output_tokens || 0,
+            contextWindow: getContextWindow(model),
+          };
+        }
+
+        // Codex: token_count events with model_context_window
+        // Use last_token_usage (current turn) not total_token_usage (cumulative across all turns)
+        if (obj.type === 'event_msg' && obj.payload?.type === 'token_count') {
+          const info = obj.payload.info;
+          if (info) {
+            const tu = info.last_token_usage || info.total_token_usage || {};
+            result = {
+              used: tu.input_tokens || 0,
+              output: tu.output_tokens || 0,
+              contextWindow: info.model_context_window || null,
+            };
+          }
+        }
+      }
+
+      return result;
+    } finally {
+      closeSync(fd);
+    }
+  } catch { return null; }
+}
+
+/**
+ * Extract context usage from pre-parsed JSONL lines.
+ * Used by the WS watcher to avoid re-reading the file.
+ */
+export function extractContextUsage(parsedLines, model) {
+  let result = null;
+  for (const obj of parsedLines) {
+    if (obj.type === 'assistant' && obj.message?.usage) {
+      const u = obj.message.usage;
+      const used = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+      result = { used, output: u.output_tokens || 0, contextWindow: getContextWindow(model) };
+    }
+    if (obj.type === 'event_msg' && obj.payload?.type === 'token_count') {
+      const info = obj.payload.info;
+      if (info) {
+        const tu = info.last_token_usage || info.total_token_usage || {};
+        result = { used: tu.input_tokens || 0, output: tu.output_tokens || 0, contextWindow: info.model_context_window || null };
+      }
+    }
+  }
+  return result;
+}
+
+/** Map model string to context window size in tokens. */
+function getContextWindow(model) {
+  if (!model) return null;
+  if (model.includes('[1m]')) return 1_000_000;
+  if (model.startsWith('claude-')) return 200_000;
+  return null; // Codex provides its own via token_count events
 }
 
 /**

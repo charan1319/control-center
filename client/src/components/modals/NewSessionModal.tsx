@@ -21,7 +21,6 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
   const [initialPrompt, setInitialPrompt] = useState('');
   const [autoApprove, setAutoApprove] = useState(1);
   const [cliType, setCliType] = useState('claude');
-  const [skipPermissions, setSkipPermissions] = useState(false);
   const [templateId, setTemplateId] = useState('');
   const [launching, setLaunching] = useState(false);
 
@@ -122,7 +121,6 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
         initialPrompt: initialPrompt.trim() || undefined,
         project: resolvedProject || project.trim() || undefined,
         cli_type: cliType,
-        skipPermissions: skipPermissions || undefined,
       });
       showToast(`Session "${label.trim()}" launched`, 'success');
       // Reset form
@@ -132,7 +130,6 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
       setProject(projects.length > 0 ? projects[0].name : '');
       setInitialPrompt('');
       setAutoApprove(1);
-      setSkipPermissions(false);
       setTemplateId('');
       onClose();
     } catch (err) {
@@ -140,7 +137,7 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
     } finally {
       setLaunching(false);
     }
-  }, [label, cwdPreset, cwdCustom, projects, project, initialPrompt, cliType, skipPermissions, onClose, showToast]);
+  }, [label, cwdPreset, cwdCustom, projects, project, initialPrompt, cliType, onClose, showToast]);
 
   if (!isOpen) return null;
 
@@ -270,18 +267,6 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
             </div>
           </div>
 
-          {/* Skip permissions */}
-          <div className="modal-checkbox-row">
-            <input
-              type="checkbox"
-              id="ns-skip-perms"
-              checked={skipPermissions}
-              onChange={e => setSkipPermissions(e.target.checked)}
-            />
-            <label className="modal-checkbox-label" htmlFor="ns-skip-perms">
-              Skip permissions (dangerously)
-            </label>
-          </div>
         </div>
 
         <div className="modal-footer">

@@ -136,6 +136,43 @@
   color: var(--ctp-text);
 }
 
+/* ─── Context meter ─── */
+.sd-context-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 auto;
+  padding: 0 12px;
+  flex-shrink: 0;
+}
+
+.sd-context-text {
+  font-size: 13px;
+  font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
+  color: var(--ctp-subtext1);
+  white-space: nowrap;
+}
+
+.sd-context-sep {
+  color: var(--ctp-overlay0);
+  margin: 0 2px;
+}
+
+.sd-context-bar {
+  width: 72px;
+  height: 6px;
+  background: var(--ctp-surface0);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.sd-context-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
 /* ─── Content area ─── */
 .sd-content {
   flex: 1;
