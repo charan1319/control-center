@@ -126,10 +126,19 @@ export function attach(tmuxTarget, socket) {
 
   entry.clients.add(socket);
 
-  // Replay scrollback so the new client sees current terminal state
+  // Replay scrollback so the new client sees current terminal state.
+  // Strip terminal query sequences that would cause xterm.js to send responses
+  // back as input to the running program (producing garbage characters).
   if (entry.scrollback.length > 0) {
     try {
-      socket.send(JSON.stringify({ type: 'output', data: entry.scrollback }));
+      let data = entry.scrollback;
+      data = data.replace(/\x1b\[>c/g, '');   // Secondary Device Attributes request
+      data = data.replace(/\x1b\[=c/g, '');   // Tertiary Device Attributes request
+      data = data.replace(/\x1b\[c/g, '');    // Primary Device Attributes request
+      data = data.replace(/\x1b\[>q/g, '');   // XTVERSION request
+      data = data.replace(/\x1b\[6n/g, '');   // Cursor position report request
+      data = data.replace(/\x1b\[5n/g, '');   // Device status report request
+      socket.send(JSON.stringify({ type: 'output', data }));
     } catch { /* ignore */ }
   }
 
@@ -221,6 +230,14 @@ export function getCleanScrollback(tmuxTarget) {
   // Strip window title sequences
   data = data.replace(/\x1b\][^\x07]*\x07/g, '');
   data = data.replace(/\x1b\][^\x1b]*\x1b\\/g, '');
+
+  // Strip terminal query sequences (would cause xterm.js to send responses as input)
+  data = data.replace(/\x1b\[>c/g, '');
+  data = data.replace(/\x1b\[=c/g, '');
+  data = data.replace(/\x1b\[c/g, '');
+  data = data.replace(/\x1b\[>q/g, '');
+  data = data.replace(/\x1b\[6n/g, '');
+  data = data.replace(/\x1b\[5n/g, '');
 
   // Collapse runs of blank lines (>3 consecutive) into 2
   data = data.replace(/(\r?\n){4,}/g, '\n\n\n');
