@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { projectColor } from '../utils';
 import { SessionCard } from './SessionCard';
 import { PulsePanel } from './PulsePanel';
+import { TeamPanel } from './TeamPanel';
 import { TodoSection } from './TodoSection';
 import type { Session, SessionEvent, ServerInfo } from '../types';
 import './ProjectGroup.css';
@@ -25,6 +26,7 @@ export function ProjectGroup({
 }: ProjectGroupProps) {
   const color = projectColor(projectName);
   const [pulseOpen, setPulseOpen] = useState(false);
+  const [teamOpen, setTeamOpen] = useState(false);
 
   return (
     <div className="project-group">
@@ -39,6 +41,12 @@ export function ProjectGroup({
             onClick={() => setPulseOpen(true)}
           >
             Pulse
+          </button>
+          <button
+            className="btn-pulse"
+            onClick={() => setTeamOpen(true)}
+          >
+            Teams
           </button>
         </div>
       )}
@@ -57,6 +65,9 @@ export function ProjectGroup({
       </div>
       {pulseOpen && projectName && (
         <PulsePanel project={projectName} onClose={() => setPulseOpen(false)} />
+      )}
+      {teamOpen && projectName && (
+        <TeamPanel project={projectName} onClose={() => setTeamOpen(false)} />
       )}
     </div>
   );

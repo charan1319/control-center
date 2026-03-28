@@ -33,6 +33,8 @@ try { db.exec(`ALTER TABLE sessions ADD COLUMN pending_tool_input TEXT`); } catc
 try { db.exec(`ALTER TABLE sessions ADD COLUMN snapshot_hash TEXT`); } catch { /* already exists */ }
 try { db.exec("ALTER TABLE sessions ADD COLUMN pulse_enabled INTEGER DEFAULT 1"); } catch { /* already exists */ }
 try { db.exec("ALTER TABLE sessions ADD COLUMN cli_type TEXT DEFAULT 'claude'"); } catch { /* already exists */ }
+try { db.exec("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT DEFAULT NULL"); } catch { /* already exists */ }
+try { db.exec("ALTER TABLE sessions ADD COLUMN last_idle_signal TEXT DEFAULT NULL"); } catch { /* already exists */ }
 
 db.exec(`
 
@@ -96,6 +98,67 @@ db.exec(`
     updated_at  TEXT DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_todos_project ON todos(project);
+`);
+
+// ── Pulse tables (shared working memory) ─────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS pulses (
+    id          TEXT PRIMARY KEY,
+    project     TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    is_main     INTEGER DEFAULT 0,
+    created_at  TEXT DEFAULT (datetime('now')),
+    updated_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_pulses_main ON pulses(project) WHERE is_main = 1;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_pulses_name ON pulses(project, name);
+
+  CREATE TABLE IF NOT EXISTS pulse_members (
+    pulse_id    TEXT NOT NULL REFERENCES pulses(id) ON DELETE CASCADE,
+    session_id  TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+    PRIMARY KEY (pulse_id, session_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_pulse_members_session ON pulse_members(session_id);
+
+  CREATE TABLE IF NOT EXISTS pulse_entries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    pulse_id    TEXT NOT NULL REFERENCES pulses(id) ON DELETE CASCADE,
+    session_id  TEXT,
+    entry_type  TEXT DEFAULT 'user_note' CHECK(entry_type IN ('briefing','file_change','status','user_note','compaction')),
+    content     TEXT NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_pulse_entries_pulse ON pulse_entries(pulse_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_pulse_entries_session ON pulse_entries(session_id);
+`);
+
+// ── Team tables (agent team orchestration) ───────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS team_templates (
+    id                  TEXT PRIMARY KEY,
+    name                TEXT NOT NULL,
+    description         TEXT DEFAULT '',
+    roles               TEXT NOT NULL,
+    coordinator_prompt  TEXT NOT NULL,
+    project             TEXT,
+    created_at          TEXT DEFAULT (datetime('now')),
+    updated_at          TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS team_instances (
+    id              TEXT PRIMARY KEY,
+    template_id     TEXT NOT NULL REFERENCES team_templates(id),
+    project         TEXT NOT NULL,
+    lead_session_id TEXT REFERENCES sessions(session_id),
+    objective       TEXT NOT NULL,
+    status          TEXT DEFAULT 'active' CHECK(status IN ('active','completed','failed')),
+    summary         TEXT,
+    created_at      TEXT DEFAULT (datetime('now')),
+    completed_at    TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_team_instances_project ON team_instances(project);
+  CREATE INDEX IF NOT EXISTS idx_team_instances_lead ON team_instances(lead_session_id);
 `);
 
 // ── FTS5 full-text search on events ─────────────
@@ -257,7 +320,8 @@ const stmts = {
 
   searchSessions: db.prepare(
     `SELECT DISTINCT s.session_id, s.label, s.project, s.cwd, s.status,
-         s.created_at, s.updated_at, h.last_seen as last_heartbeat,
+         s.created_at, s.updated_at, s.parent_session_id, s.last_idle_signal,
+         h.last_seen as last_heartbeat,
          (SELECT COUNT(*) FROM events WHERE session_id = s.session_id) as tool_count
     FROM sessions s
     LEFT JOIN heartbeats h ON h.session_id = s.session_id
@@ -314,6 +378,90 @@ const stmts = {
   ),
   getTodoBySessionId: db.prepare(`SELECT * FROM todos WHERE session_id = @session_id`),
   getTodoById: db.prepare(`SELECT * FROM todos WHERE id = @id`),
+
+  // ── Pulses ──────────────────────────────────────
+  getPulse: db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM pulse_entries WHERE pulse_id = p.id) AS entry_count FROM pulses p WHERE p.id = @id`),
+  getPulsesByProject: db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM pulse_entries WHERE pulse_id = p.id) AS entry_count FROM pulses p WHERE p.project = @project ORDER BY p.is_main DESC, p.name ASC`),
+  getMainPulse: db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM pulse_entries WHERE pulse_id = p.id) AS entry_count FROM pulses p WHERE p.project = @project AND p.is_main = 1`),
+  insertPulse: db.prepare(`INSERT INTO pulses (id, project, name, description, is_main) VALUES (@id, @project, @name, @description, @is_main)`),
+  insertPulseIgnore: db.prepare(`INSERT OR IGNORE INTO pulses (id, project, name, description, is_main) VALUES (@id, @project, @name, @description, @is_main)`),
+  updatePulse: db.prepare(`UPDATE pulses SET name = COALESCE(@name, name), description = COALESCE(@description, description), updated_at = datetime('now') WHERE id = @id`),
+  deletePulse: db.prepare(`DELETE FROM pulses WHERE id = @id AND is_main = 0`),
+
+  // ── Pulse entries ───────────────────────────────
+  getPulseEntries: db.prepare(
+    `SELECT pe.*, s.label AS session_label FROM pulse_entries pe LEFT JOIN sessions s ON pe.session_id = s.session_id
+     WHERE pe.pulse_id = @pulse_id AND (@before IS NULL OR pe.created_at < @before)
+     ORDER BY pe.created_at DESC LIMIT @limit`
+  ),
+  getPulseEntriesAsc: db.prepare(
+    `SELECT pe.*, s.label AS session_label FROM pulse_entries pe LEFT JOIN sessions s ON pe.session_id = s.session_id
+     WHERE pe.pulse_id = @pulse_id ORDER BY pe.created_at ASC`
+  ),
+  insertPulseEntry: db.prepare(
+    `INSERT INTO pulse_entries (pulse_id, session_id, entry_type, content) VALUES (@pulse_id, @session_id, @entry_type, @content)`
+  ),
+  deletePulseEntry: db.prepare(`DELETE FROM pulse_entries WHERE id = @id`),
+  deletePulseEntriesByIds: db.prepare(`DELETE FROM pulse_entries WHERE id IN (SELECT value FROM json_each(@ids))`),
+  deleteUserNotesByPulse: db.prepare(`DELETE FROM pulse_entries WHERE pulse_id = @pulse_id AND entry_type = 'user_note'`),
+  getPulseEntryCount: db.prepare(`SELECT COUNT(*) AS n FROM pulse_entries WHERE pulse_id = @pulse_id`),
+  getOldestUncompactedEntry: db.prepare(
+    `SELECT MIN(created_at) AS oldest FROM pulse_entries WHERE pulse_id = @pulse_id AND entry_type != 'compaction'`
+  ),
+
+  // ── Pulse members ──────────────────────────────
+  getPulseMembers: db.prepare(
+    `SELECT pm.session_id, s.label, s.status FROM pulse_members pm LEFT JOIN sessions s ON pm.session_id = s.session_id WHERE pm.pulse_id = @pulse_id`
+  ),
+  getSessionPulses: db.prepare(
+    `SELECT p.*, (SELECT COUNT(*) FROM pulse_entries WHERE pulse_id = p.id) AS entry_count
+     FROM pulses p JOIN pulse_members pm ON p.id = pm.pulse_id WHERE pm.session_id = @session_id`
+  ),
+  getAllPulseMemberships: db.prepare(
+    `SELECT pm.session_id, pm.pulse_id, p.name AS pulse_name, p.is_main FROM pulse_members pm JOIN pulses p ON pm.pulse_id = p.id`
+  ),
+  addPulseMember: db.prepare(`INSERT OR IGNORE INTO pulse_members (pulse_id, session_id) VALUES (@pulse_id, @session_id)`),
+  removePulseMember: db.prepare(`DELETE FROM pulse_members WHERE pulse_id = @pulse_id AND session_id = @session_id`),
+  removePulseMembersBySession: db.prepare(`DELETE FROM pulse_members WHERE session_id = @session_id`),
+
+  // ── Session columns for subagent/idle ──────────
+  setParentSession: db.prepare(`UPDATE sessions SET parent_session_id = @parent_id, updated_at = datetime('now') WHERE session_id = @id`),
+  setLastIdleSignal: db.prepare(`UPDATE sessions SET last_idle_signal = @ts, updated_at = datetime('now') WHERE session_id = @id`),
+
+  // ── Team templates ─────────────────────────────
+  getTeamTemplates: db.prepare(`SELECT * FROM team_templates ORDER BY name ASC`),
+  getTeamTemplate: db.prepare(`SELECT * FROM team_templates WHERE id = @id`),
+  insertTeamTemplate: db.prepare(
+    `INSERT INTO team_templates (id, name, description, roles, coordinator_prompt, project) VALUES (@id, @name, @description, @roles, @coordinator_prompt, @project)`
+  ),
+  insertTeamTemplateIgnore: db.prepare(
+    `INSERT OR IGNORE INTO team_templates (id, name, description, roles, coordinator_prompt, project) VALUES (@id, @name, @description, @roles, @coordinator_prompt, @project)`
+  ),
+  updateTeamTemplate: db.prepare(
+    `UPDATE team_templates SET name=COALESCE(@name,name), description=COALESCE(@description,description),
+     roles=COALESCE(@roles,roles), coordinator_prompt=COALESCE(@coordinator_prompt,coordinator_prompt),
+     project=COALESCE(@project,project), updated_at=datetime('now') WHERE id=@id`
+  ),
+  deleteTeamTemplate: db.prepare(`DELETE FROM team_templates WHERE id = @id`),
+  getTeamInstancesByTemplate: db.prepare(`SELECT COUNT(*) AS n FROM team_instances WHERE template_id = @template_id`),
+
+  // ── Team instances ─────────────────────────────
+  getTeamInstances: db.prepare(
+    `SELECT * FROM team_instances WHERE (@project IS NULL OR project = @project) ORDER BY created_at DESC`
+  ),
+  getTeamInstance: db.prepare(`SELECT * FROM team_instances WHERE id = @id`),
+  getTeamInstanceByLead: db.prepare(`SELECT * FROM team_instances WHERE lead_session_id = @lead_session_id AND status = 'active'`),
+  insertTeamInstance: db.prepare(
+    `INSERT INTO team_instances (id, template_id, project, lead_session_id, objective) VALUES (@id, @template_id, @project, @lead_session_id, @objective)`
+  ),
+  updateTeamInstance: db.prepare(
+    `UPDATE team_instances SET lead_session_id=COALESCE(@lead_session_id, lead_session_id),
+     status=COALESCE(@status, status), summary=COALESCE(@summary, summary),
+     completed_at=COALESCE(@completed_at, completed_at) WHERE id=@id`
+  ),
+  clearTeamLeadRef: db.prepare(
+    `UPDATE team_instances SET lead_session_id = NULL WHERE lead_session_id IN (SELECT session_id FROM sessions WHERE status = 'stopped' AND updated_at < datetime('now', @offset))`
+  ),
 };
 
 // ──────────────────────────────────────────────
@@ -497,6 +645,10 @@ const statsStmts = {
     INSERT INTO stats (key, value) VALUES (@key, @delta)
     ON CONFLICT(key) DO UPDATE SET value = value + @delta
   `),
+  set: db.prepare(`
+    INSERT INTO stats (key, value) VALUES (@key, @value)
+    ON CONFLICT(key) DO UPDATE SET value = @value
+  `),
   getAll: db.prepare(`SELECT key, value FROM stats`),
   totalSessions: db.prepare(`SELECT COUNT(*) as n FROM sessions`),
   sessionsThisWeek: db.prepare(`SELECT COUNT(*) as n FROM sessions WHERE created_at > datetime('now', '-7 days')`),
@@ -532,6 +684,79 @@ export function getStats() {
     aiCostUsd: costUsd,
   };
 }
+
+export function setStat(key, value) {
+  statsStmts.set.run({ key, value });
+}
+
+// ── Pulses ──────────────────────────────────────
+export function getPulse(id) { return stmts.getPulse.get({ id }); }
+export function getPulsesByProject(project) { return stmts.getPulsesByProject.all({ project }); }
+export function getMainPulse(project) { return stmts.getMainPulse.get({ project }); }
+export function insertPulse({ id, project, name, description, is_main }) {
+  return stmts.insertPulse.run({ id, project, name, description: description || '', is_main: is_main || 0 });
+}
+export function insertPulseIgnore({ id, project, name, description, is_main }) {
+  return stmts.insertPulseIgnore.run({ id, project, name, description: description || '', is_main: is_main || 0 });
+}
+export function updatePulse(id, { name, description }) {
+  return stmts.updatePulse.run({ id, name: name ?? null, description: description ?? null });
+}
+export function deletePulse(id) { return stmts.deletePulse.run({ id }); }
+
+export function getPulseEntries(pulse_id, { limit = 50, before = null } = {}) {
+  return stmts.getPulseEntries.all({ pulse_id, limit, before });
+}
+export function getPulseEntriesAsc(pulse_id) { return stmts.getPulseEntriesAsc.all({ pulse_id }); }
+export function insertPulseEntry({ pulse_id, session_id, entry_type, content }) {
+  return stmts.insertPulseEntry.run({ pulse_id, session_id: session_id || null, entry_type: entry_type || 'user_note', content });
+}
+export function deletePulseEntry(id) { return stmts.deletePulseEntry.run({ id }); }
+export function deletePulseEntriesByIds(ids) {
+  return stmts.deletePulseEntriesByIds.run({ ids: JSON.stringify(ids) });
+}
+export function deleteUserNotesByPulse(pulse_id) { return stmts.deleteUserNotesByPulse.run({ pulse_id }); }
+export function getPulseEntryCount(pulse_id) { return stmts.getPulseEntryCount.get({ pulse_id }).n; }
+export function getOldestUncompactedEntry(pulse_id) { return stmts.getOldestUncompactedEntry.get({ pulse_id }).oldest; }
+
+export function getPulseMembers(pulse_id) { return stmts.getPulseMembers.all({ pulse_id }); }
+export function getSessionPulses(session_id) { return stmts.getSessionPulses.all({ session_id }); }
+export function getAllPulseMemberships() { return stmts.getAllPulseMemberships.all(); }
+export function addPulseMember(pulse_id, session_id) { return stmts.addPulseMember.run({ pulse_id, session_id }); }
+export function removePulseMember(pulse_id, session_id) { return stmts.removePulseMember.run({ pulse_id, session_id }); }
+export function removePulseMembersBySession(session_id) { return stmts.removePulseMembersBySession.run({ session_id }); }
+
+export function setParentSession(id, parent_id) { return stmts.setParentSession.run({ id, parent_id }); }
+export function setLastIdleSignal(id, ts) { return stmts.setLastIdleSignal.run({ id, ts }); }
+
+// ── Teams ──────────────────────────────────────
+export function getTeamTemplates() { return stmts.getTeamTemplates.all(); }
+export function getTeamTemplate(id) { return stmts.getTeamTemplate.get({ id }); }
+export function insertTeamTemplate({ id, name, description, roles, coordinator_prompt, project }) {
+  return stmts.insertTeamTemplate.run({ id, name, description: description || '', roles: typeof roles === 'string' ? roles : JSON.stringify(roles), coordinator_prompt, project: project || null });
+}
+export function insertTeamTemplateIgnore({ id, name, description, roles, coordinator_prompt, project }) {
+  return stmts.insertTeamTemplateIgnore.run({ id, name, description: description || '', roles: typeof roles === 'string' ? roles : JSON.stringify(roles), coordinator_prompt, project: project || null });
+}
+export function updateTeamTemplate(id, { name, description, roles, coordinator_prompt, project }) {
+  return stmts.updateTeamTemplate.run({ id, name: name ?? null, description: description ?? null, roles: roles ? (typeof roles === 'string' ? roles : JSON.stringify(roles)) : null, coordinator_prompt: coordinator_prompt ?? null, project: project ?? null });
+}
+export function deleteTeamTemplate(id) { return stmts.deleteTeamTemplate.run({ id }); }
+export function getTeamInstancesByTemplate(template_id) { return stmts.getTeamInstancesByTemplate.get({ template_id }).n; }
+
+export function getTeamInstances(project) { return stmts.getTeamInstances.all({ project: project || null }); }
+export function getTeamInstance(id) { return stmts.getTeamInstance.get({ id }); }
+export function getTeamInstanceByLead(lead_session_id) { return stmts.getTeamInstanceByLead.get({ lead_session_id }); }
+export function insertTeamInstance({ id, template_id, project, lead_session_id, objective }) {
+  return stmts.insertTeamInstance.run({ id, template_id, project, lead_session_id: lead_session_id || null, objective });
+}
+export function updateTeamInstance(id, { lead_session_id, status, summary, completed_at }) {
+  return stmts.updateTeamInstance.run({ id, lead_session_id: lead_session_id ?? null, status: status ?? null, summary: summary ?? null, completed_at: completed_at ?? null });
+}
+export function clearTeamLeadRefs(days) { return stmts.clearTeamLeadRef.run({ offset: `-${days} days` }); }
+
+// Transaction helper
+export const transaction = db.transaction.bind(db);
 
 // ── Shutdown ──────────────────────────────────────
 export function close() {

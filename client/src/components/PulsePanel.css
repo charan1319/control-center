@@ -17,8 +17,8 @@
   border: 1px solid var(--ctp-surface1);
   border-radius: 12px;
   width: 90vw;
-  max-width: 700px;
-  max-height: 80vh;
+  max-width: 750px;
+  max-height: 85vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -41,6 +41,60 @@
   color: var(--ctp-text);
 }
 
+.pulse-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ─── Tabs ─── */
+
+.pulse-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 16px 0;
+  border-bottom: 1px solid var(--ctp-surface1);
+  flex-shrink: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.pulse-tab {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ctp-subtext0);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pulse-tab:hover {
+  color: var(--ctp-text);
+}
+
+.pulse-tab-active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.pulse-tab-count {
+  font-size: 11px;
+  background: var(--ctp-surface2);
+  color: var(--ctp-subtext1);
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+/* ─── Content area ─── */
+
 .pulse-content {
   display: flex;
   flex-direction: column;
@@ -48,67 +102,111 @@
   min-height: 0;
 }
 
-/* ─── Markdown section (scrollable, read-only) ─── */
-
-.pulse-markdown-section {
-  flex: 1;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  padding: 16px;
-  min-height: 0;
-}
-
 .pulse-loading {
   color: var(--color-muted);
   font-size: 13px;
   font-style: italic;
+  padding: 24px 16px;
 }
 
-.pulse-markdown {
+.pulse-empty {
+  color: var(--color-muted);
   font-size: 13px;
-  line-height: 1.6;
+  padding: 24px 16px;
+  text-align: center;
+}
+
+/* ─── Actions bar (description + dream/edit/delete) ─── */
+
+.pulse-actions-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--ctp-surface1);
+  flex-shrink: 0;
+  gap: 12px;
+}
+
+.pulse-description {
+  font-size: 12px;
+  color: var(--ctp-subtext0);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pulse-actions-right {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* ─── Entry list ─── */
+
+.pulse-entries-section {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  min-height: 0;
+}
+
+.pulse-entries-list {
+  padding: 8px 0;
+}
+
+.pulse-entry {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--ctp-surface1);
+}
+
+.pulse-entry:last-child {
+  border-bottom: none;
+}
+
+.pulse-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.pulse-entry-badge {
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.pulse-entry-source {
+  font-weight: 600;
+  color: var(--ctp-text);
+}
+
+.pulse-entry-type {
+  color: var(--ctp-subtext0);
+  font-size: 11px;
+  background: var(--ctp-surface2);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.pulse-entry-time {
+  color: var(--color-muted);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.pulse-entry-content {
+  font-size: 13px;
+  line-height: 1.5;
   color: var(--ctp-subtext1);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-.pulse-markdown h2 {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--ctp-text);
-  margin: 16px 0 8px 0;
-}
-
-.pulse-markdown h2:first-child {
-  margin-top: 0;
-}
-
-.pulse-markdown h3 {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-info);
-  margin: 12px 0 6px 0;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.pulse-markdown p {
-  margin: 4px 0;
-}
-
-.pulse-markdown ul {
-  margin: 4px 0;
-  padding-left: 20px;
-}
-
-.pulse-markdown li {
-  margin: 2px 0;
-}
-
-.pulse-markdown strong {
-  color: var(--ctp-text);
-  font-weight: 600;
-}
-
-/* ─── Notes section (sticky bottom) ─── */
+/* ─── Notes section (backward compat, Main tab only) ─── */
 
 .pulse-notes-section {
   flex-shrink: 0;
@@ -147,8 +245,8 @@
 
 .pulse-notes-textarea {
   width: 100%;
-  min-height: 80px;
-  max-height: 150px;
+  min-height: 60px;
+  max-height: 120px;
   padding: 10px 12px;
   background: var(--ctp-surface0);
   border: 1px solid var(--ctp-surface1);
@@ -170,6 +268,160 @@
   color: var(--color-muted);
 }
 
+/* ─── Note input bar (bottom) ─── */
+
+.pulse-input-section {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--ctp-surface1);
+  flex-shrink: 0;
+  background: var(--ctp-mantle);
+}
+
+.pulse-note-input {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--ctp-surface0);
+  border: 1px solid var(--ctp-surface1);
+  border-radius: 6px;
+  color: var(--ctp-text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.pulse-note-input:focus {
+  border-color: var(--color-primary);
+}
+
+.pulse-note-input::placeholder {
+  color: var(--color-muted);
+}
+
+.pulse-note-input:disabled {
+  opacity: 0.6;
+}
+
+/* ─── Buttons ─── */
+
+.pulse-btn {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--ctp-surface2);
+  border-radius: 6px;
+  background: var(--ctp-surface1);
+  color: var(--ctp-text);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.pulse-btn:hover {
+  background: var(--ctp-surface2);
+}
+
+.pulse-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pulse-btn-small {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.pulse-btn-primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--ctp-base);
+}
+
+.pulse-btn-primary:hover {
+  opacity: 0.9;
+}
+
+.pulse-btn-primary:disabled {
+  opacity: 0.4;
+}
+
+.pulse-btn-danger {
+  color: var(--ctp-red);
+  border-color: var(--ctp-red);
+  background: transparent;
+}
+
+.pulse-btn-danger:hover {
+  background: rgba(243, 139, 168, 0.1);
+}
+
+/* ─── Dialog overlay (for create/edit/delete) ─── */
+
+.pulse-dialog-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  border-radius: 12px;
+}
+
+.pulse-dialog {
+  background: var(--ctp-surface0);
+  border: 1px solid var(--ctp-surface2);
+  border-radius: 10px;
+  padding: 20px;
+  width: 90%;
+  max-width: 360px;
+}
+
+.pulse-dialog h3 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ctp-text);
+}
+
+.pulse-dialog-input {
+  width: 100%;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  background: var(--ctp-mantle);
+  border: 1px solid var(--ctp-surface1);
+  border-radius: 6px;
+  color: var(--ctp-text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.pulse-dialog-input:focus {
+  border-color: var(--color-primary);
+}
+
+.pulse-dialog-input::placeholder {
+  color: var(--color-muted);
+}
+
+.pulse-dialog-text {
+  font-size: 13px;
+  color: var(--ctp-subtext1);
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+
+.pulse-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 /* ─── Tablet+ ─── */
 @media (min-width: 768px) {
   .pulse-overlay {
@@ -180,12 +432,24 @@
     padding: 16px 20px;
   }
 
-  .pulse-markdown-section {
-    padding: 20px;
+  .pulse-tabs {
+    padding: 8px 20px 0;
+  }
+
+  .pulse-actions-bar {
+    padding: 8px 20px;
+  }
+
+  .pulse-entry {
+    padding: 10px 20px;
   }
 
   .pulse-notes-section {
     padding: 14px 20px 16px;
+  }
+
+  .pulse-input-section {
+    padding: 10px 20px 14px;
   }
 
   .pulse-notes-textarea {

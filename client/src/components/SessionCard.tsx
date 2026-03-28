@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { useApi } from '../hooks/useApi';
 import { api } from '../api';
+import { useWebSocket } from '../hooks/useWebSocket';
 import { useToast } from './Toast';
 import {
   getStatusClass, getStatusText, getDetailText,
@@ -22,10 +23,15 @@ interface SessionCardProps {
 
 function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEvents }: SessionCardProps) {
   const { showToast } = useToast();
+  const { pulseMemberships } = useWebSocket();
   const [editOpen, setEditOpen] = useState(false);
   const [linkTmuxOpen, setLinkTmuxOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+
+  const sessionPulses = pulseMemberships.filter(m => m.session_id === session.session_id);
+  const mainPulse = sessionPulses.find(m => m.is_main);
+  const topicPulses = sessionPulses.filter(m => !m.is_main);
 
   const statusClass = getStatusClass(session);
   const statusText = getStatusText(session);
@@ -105,16 +111,26 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
     setSnapshotOpen(true);
   }, []);
 
-  const handlePulseToggle = useCallback(async (e: React.MouseEvent) => {
+  const handleBrief = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!mainPulse) return;
+    try {
+      await api.triggerBrief(session.session_id, mainPulse.pulse_id);
+      showToast('Brief triggered', 'success');
+    } catch {
+      showToast('Failed to trigger brief', 'error');
+    }
+  }, [session.session_id, mainPulse, showToast]);
+
+  const handleSync = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await api.patchSession(session.session_id, {
-        pulse_enabled: session.pulse_enabled ? 0 : 1,
-      });
+      await api.syncPulse(session.session_id);
+      showToast('Pulse synced', 'success');
     } catch {
-      // handled by WS update
+      showToast('Failed to sync pulse', 'error');
     }
-  }, [session.session_id, session.pulse_enabled]);
+  }, [session.session_id, showToast]);
 
   const handleAutoApproveChange = useCallback(async (e: React.ChangeEvent<HTMLSelectElement>) => {
     e.stopPropagation();
@@ -217,6 +233,22 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
         </div>
       )}
 
+      {sessionPulses.length > 0 && (
+        <div className="card-pulse-badges">
+          {mainPulse && (
+            <span className="pulse-badge pulse-badge-main" title={`Main pulse: ${mainPulse.pulse_name || 'main'}`} />
+          )}
+          {topicPulses.slice(0, 3).map(p => (
+            <span key={p.pulse_id} className="pulse-badge pulse-badge-topic" title={p.pulse_name}>
+              {p.pulse_name}
+            </span>
+          ))}
+          {topicPulses.length > 3 && (
+            <span className="pulse-badge pulse-badge-overflow">+{topicPulses.length - 3}</span>
+          )}
+        </div>
+      )}
+
       <div className="card-actions">
         {statusClass === 'waiting' && session.cli_type === 'codex' && (
           <span className="codex-approval-note" title="Codex approval policy is set at launch">
@@ -249,13 +281,14 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
             Revert
           </button>
         )}
-        {session.project && (
-          <button
-            className={`btn-pulse-toggle${session.pulse_enabled ? ' pulse-on' : ''}`}
-            onClick={handlePulseToggle}
-            title={session.pulse_enabled ? 'Pulse reporting enabled' : 'Pulse reporting disabled'}
-          >
-            Pulse {session.pulse_enabled ? 'On' : 'Off'}
+        {!isStopped && sessionPulses.length > 0 && (
+          <button className="btn-brief" onClick={handleBrief} title="Trigger briefing from main pulse">
+            Brief
+          </button>
+        )}
+        {!isStopped && sessionPulses.length > 0 && (
+          <button className="btn-sync" onClick={handleSync} title="Sync pulse context to session">
+            Sync
           </button>
         )}
         {showKill && (
@@ -301,7 +334,6 @@ export const SessionCard = React.memo(SessionCardInner, (prev, next) => {
     prev.session.last_heartbeat === next.session.last_heartbeat &&
     prev.session.status === next.session.status &&
     prev.session.pending_tool === next.session.pending_tool &&
-    prev.session.pulse_enabled === next.session.pulse_enabled &&
     prev.session.auto_approve === next.session.auto_approve &&
     prev.isSelected === next.isSelected
   );

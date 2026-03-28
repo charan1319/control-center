@@ -24,6 +24,9 @@ export interface Session {
   pulse_enabled?: number;
   files?: FileEdit[];
   conflicts?: string[];
+  // Pulse evolution additions
+  parent_session_id?: string | null;
+  last_idle_signal?: string | null;
 }
 
 export interface SessionEvent {
@@ -122,14 +125,91 @@ export interface Stats {
   aiCostUsd: number;
 }
 
+// ─── Pulse types ───
+
+export interface Pulse {
+  id: string;
+  project: string;
+  name: string;
+  description: string;
+  is_main: number;
+  entry_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PulseEntry {
+  id: number;
+  pulse_id: string;
+  session_id: string | null;
+  session_label?: string;
+  entry_type: 'briefing' | 'file_change' | 'status' | 'user_note' | 'compaction';
+  content: string;
+  created_at: string;
+}
+
+export interface PulseMembership {
+  session_id: string;
+  pulse_id: string;
+  pulse_name: string;
+  is_main: number;
+}
+
+// ─── Team types ───
+
+export interface TeamRole {
+  name: string;
+  description: string;
+  agent_type: string;
+  auto_approve: 'full' | 'readonly' | 'none';
+}
+
+export interface TeamTemplate {
+  id: string;
+  name: string;
+  description: string;
+  roles: TeamRole[] | string; // JSON string from DB or parsed array
+  coordinator_prompt: string;
+  project?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TeamInstance {
+  id: string;
+  template_id: string;
+  project: string;
+  lead_session_id: string | null;
+  status: 'active' | 'completed' | 'failed';
+  objective: string;
+  summary?: string | null;
+  created_at: string;
+  completed_at?: string | null;
+}
+
 // ─── WebSocket messages ───
 
 export type WSIncoming =
-  | { type: 'init'; sessions: Session[]; recentEvents: SessionEvent[] }
+  | { type: 'init'; sessions: Session[]; recentEvents: SessionEvent[]; pulseMemberships?: PulseMembership[] }
   | { type: 'session_update'; session: Session }
   | { type: 'event'; event: string; session_id: string; tool_name?: string; tool_input?: string; timestamp?: string; auto_approved?: boolean }
   | { type: 'transcript_update'; session_id: string; entries: TranscriptEntry[]; turnComplete?: boolean; contextUsage?: ContextUsage }
-  | { type: 'todo_session_stopped'; todo_id: number; session_id: string };
+  | { type: 'todo_session_stopped'; todo_id: number; session_id: string }
+  // Pulse events
+  | { type: 'pulse_entry'; pulse_id: string; entry: PulseEntry }
+  | { type: 'pulse_update'; pulse: Pulse }
+  | { type: 'pulse_deleted'; pulse_id: string }
+  | { type: 'pulse_member_added'; pulse_id: string; session_id: string }
+  | { type: 'pulse_member_removed'; pulse_id: string; session_id: string }
+  // Subagent events
+  | { type: 'subagent_started'; parent_session_id: string; session: Session }
+  | { type: 'subagent_stopped'; parent_session_id: string; session_id: string }
+  // Task events
+  | { type: 'task_created'; session_id: string; task_subject: string }
+  | { type: 'task_completed'; session_id: string; task_subject: string }
+  // Team events
+  | { type: 'team_launched'; team: TeamInstance }
+  | { type: 'team_completed'; team_id: string; summary: string };
 
 export type WSOutgoing =
   | { type: 'subscribe_transcript'; session_id: string }

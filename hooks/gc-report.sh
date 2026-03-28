@@ -12,7 +12,7 @@ INPUT=$(cat)
 EVENT=$(echo "$INPUT" | jq -r '.event_name // empty')
 case "$EVENT" in
   SessionStart) CC_EVENT="SessionStart" ;;
-  SessionEnd)   CC_EVENT="Stop" ;;
+  SessionEnd)   CC_EVENT="SessionEnd" ;;
   BeforeTool)   CC_EVENT="PermissionRequest" ;;
   *)            exit 0 ;;
 esac

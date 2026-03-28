@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import React from 'react';
-import type { Session, SessionEvent, TranscriptEntry, ContextUsage, WSIncoming, WSOutgoing } from '../types';
+import type { Session, SessionEvent, TranscriptEntry, ContextUsage, PulseMembership, WSIncoming, WSOutgoing } from '../types';
 import { api } from '../api';
 
 export interface TodoStopEvent {
@@ -20,6 +20,8 @@ interface WebSocketState {
   todoStopVersion: number;
   getTodoStopEvents: () => TodoStopEvent[];
   refreshSession: (sessionId: string) => void;
+  pulseMemberships: PulseMembership[];
+  pulseVersion: number;
 }
 
 const WebSocketContext = createContext<WebSocketState | null>(null);
@@ -36,6 +38,8 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'reconnecting' | 'disconnected'>('connecting');
   const [transcriptVersion, setTranscriptVersion] = useState(0);
   const [todoStopVersion, setTodoStopVersion] = useState(0);
+  const [pulseMemberships, setPulseMemberships] = useState<PulseMembership[]>([]);
+  const [pulseVersion, setPulseVersion] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectDelay = useRef(1000);
@@ -122,6 +126,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
           case 'init':
             setSessions(msg.sessions);
             setRecentEvents(msg.recentEvents);
+            if (msg.pulseMemberships) setPulseMemberships(msg.pulseMemberships);
             break;
 
           case 'session_update':
@@ -174,6 +179,49 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
             todoStopEvents.current.push({ todo_id: msg.todo_id, session_id: msg.session_id });
             setTodoStopVersion(v => v + 1);
             break;
+
+          case 'pulse_entry':
+          case 'pulse_update':
+          case 'pulse_deleted':
+            setPulseVersion(v => v + 1);
+            break;
+
+          case 'pulse_member_added':
+            setPulseMemberships(prev => {
+              if (prev.some(m => m.pulse_id === msg.pulse_id && m.session_id === msg.session_id)) return prev;
+              return [...prev, { pulse_id: msg.pulse_id, session_id: msg.session_id, pulse_name: '', is_main: 0 }];
+            });
+            setPulseVersion(v => v + 1);
+            break;
+
+          case 'pulse_member_removed':
+            setPulseMemberships(prev => prev.filter(m => !(m.pulse_id === msg.pulse_id && m.session_id === msg.session_id)));
+            setPulseVersion(v => v + 1);
+            break;
+
+          case 'subagent_started':
+            setSessions(prev => {
+              if (prev.some(s => s.session_id === msg.session.session_id)) return prev;
+              return [msg.session, ...prev];
+            });
+            break;
+
+          case 'subagent_stopped':
+            setSessions(prev => prev.map(s =>
+              s.session_id === msg.session_id ? { ...s, status: 'stopped' as const } : s
+            ));
+            break;
+
+          case 'task_created':
+          case 'task_completed':
+            // Just trigger a pulse version bump so UI refreshes
+            setPulseVersion(v => v + 1);
+            break;
+
+          case 'team_launched':
+          case 'team_completed':
+            setPulseVersion(v => v + 1);
+            break;
         }
       };
 
@@ -216,6 +264,8 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     todoStopVersion,
     getTodoStopEvents,
     refreshSession,
+    pulseMemberships,
+    pulseVersion,
   };
 
   return React.createElement(WebSocketContext.Provider, { value }, children);

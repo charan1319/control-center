@@ -4,7 +4,8 @@ import fastifyWebSocket from '@fastify/websocket';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, basename } from 'node:path';
 import { hostname } from 'node:os';
-import { execFileSync, execFile, execSync } from 'node:child_process';
+import { execFileSync, execFile, execSync, spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync, watch, openSync, readSync, fstatSync, closeSync, readdirSync, statSync } from 'node:fs';
 import webpush from 'web-push';
 import config from './config.js';
@@ -25,6 +26,13 @@ const dashboardClients = new Set();
 
 // Transcript file watchers: session_id → { watcher, subscribers: Set<socket>, lastSize, filePath }
 const transcriptWatchers = new Map();
+
+// Idempotency for session-end handling (only process each session once per server lifetime)
+const SERVER_START = new Date().toISOString();
+const sessionsEnded = new Set();
+
+// File change debounce for pulse entries (Phase 2)
+const fileChangeDebounce = new Map(); // session_id → { files: Map<path, tool_name>, timer }
 
 async function sendPushNotification(title, body, tag = 'cc', url = '/') {
   if (!config.pushEnabled) return;
@@ -288,22 +296,6 @@ function cleanupZombies() {
 }
 
 // ──────────────────────────────────────────────
-// Debounced pulse regeneration
-// ──────────────────────────────────────────────
-
-const pulseDebounceTimers = new Map();
-function schedulePulseRegeneration(project, delayMs) {
-  if (!project) return;
-  if (pulseDebounceTimers.has(project)) {
-    clearTimeout(pulseDebounceTimers.get(project));
-  }
-  pulseDebounceTimers.set(project, setTimeout(() => {
-    pulseDebounceTimers.delete(project);
-    pulse.generatePulse(project);
-  }, delayMs));
-}
-
-// ──────────────────────────────────────────────
 // Build server (exported for tests)
 // ──────────────────────────────────────────────
 
@@ -351,7 +343,8 @@ export async function buildServer(opts = {}) {
     // Send full current state on connect
     const sessions = db.getAllSessions();
     const recentEvents = db.getRecentEvents(50);
-    socket.send(JSON.stringify({ type: 'init', sessions, recentEvents }));
+    const pulseMemberships = db.getAllPulseMemberships();
+    socket.send(JSON.stringify({ type: 'init', sessions, recentEvents, pulseMemberships }));
 
     // Track which transcript this socket is subscribed to (at most one)
     let subscribedSessionId = null;
@@ -398,6 +391,109 @@ export async function buildServer(opts = {}) {
         if (client.readyState === 1) client.send(msg);
       } catch { /* client gone */ }
     }
+  }
+
+  function broadcastPulseEntry(pulseId, entry) {
+    const msg = JSON.stringify({ type: 'pulse_entry', pulse_id: pulseId, entry });
+    for (const client of dashboardClients) {
+      try { if (client.readyState === 1) client.send(msg); } catch { /* gone */ }
+    }
+  }
+
+  function broadcastPulseUpdate(pulseId) {
+    const p = db.getPulse(pulseId);
+    if (!p) return;
+    const msg = JSON.stringify({ type: 'pulse_update', pulse: p });
+    for (const client of dashboardClients) {
+      try { if (client.readyState === 1) client.send(msg); } catch { /* gone */ }
+    }
+  }
+
+  function broadcastTodoSessionStopped(sessionId) {
+    const todo = db.getTodoBySessionId(sessionId);
+    if (todo) {
+      const msg = JSON.stringify({ type: 'todo_session_stopped', todo_id: todo.id, session_id: sessionId });
+      for (const client of dashboardClients) {
+        try { if (client.readyState === 1) client.send(msg); } catch {}
+      }
+    }
+  }
+
+  // ──────────────────────────────────────────────
+  // handleSessionEnded — fire-and-forget idempotent session cleanup
+  // ──────────────────────────────────────────────
+
+  function handleSessionEnded(sessionId) {
+    // Idempotency: only process each session once per server lifetime
+    if (sessionsEnded.has(sessionId)) return;
+    sessionsEnded.add(sessionId);
+
+    // Fire and forget — don't block callers
+    setImmediate(() => {
+      try {
+        // Flush file change debounce
+        const pending = fileChangeDebounce.get(sessionId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          flushFileChanges(sessionId, pending);
+          fileChangeDebounce.delete(sessionId);
+        }
+
+        // Auto-briefing: extract transcript summary as pulse entry
+        const session = db.getSession(sessionId);
+        if (session?.project && session?.transcript) {
+          try {
+            const text = getLastAssistantText(session.transcript);
+            if (text && text.length > 20) {
+              const mainPulse = pulse.getOrCreateMainPulse(session.project);
+              if (mainPulse) {
+                const label = session.label || sessionId.slice(0, 12);
+                const summary = text.slice(0, 500);
+                db.insertPulseEntry({
+                  pulse_id: mainPulse.id,
+                  session_id: sessionId,
+                  entry_type: 'briefing',
+                  content: `Session ended — ${label}: ${summary}`,
+                });
+                broadcastPulseEntry(mainPulse.id, { session_id: sessionId, entry_type: 'briefing', content: `Session ended — ${label}: ${summary}` });
+              }
+            }
+          } catch { /* transcript read failed */ }
+        }
+
+        // Handle team completion: check if session was a team lead
+        try {
+          const teamInstance = db.getTeamInstanceByLead(sessionId);
+          if (teamInstance && teamInstance.status === 'active') {
+            db.updateTeamInstance(teamInstance.id, { status: 'completed', completed_at: new Date().toISOString() });
+          }
+        } catch { /* ignore */ }
+
+        // TODO notification
+        broadcastTodoSessionStopped(sessionId);
+      } catch (err) {
+        fastify.log.warn({ err, session_id: sessionId }, 'handleSessionEnded error');
+      }
+    });
+  }
+
+  // Flush accumulated file changes as a single pulse entry
+  function flushFileChanges(sessionId, pending) {
+    if (!pending || pending.files.size === 0) return;
+    const session = db.getSession(sessionId);
+    if (!session?.project) return;
+    const mainPulse = pulse.getOrCreateMainPulse(session.project);
+    if (!mainPulse) return;
+    const label = session.label || sessionId.slice(0, 8);
+    const fileList = Array.from(pending.files.keys()).slice(0, 10).join(', ');
+    const extra = pending.files.size > 10 ? ` (+${pending.files.size - 10} more)` : '';
+    db.insertPulseEntry({
+      pulse_id: mainPulse.id,
+      session_id: sessionId,
+      entry_type: 'file_change',
+      content: `${label} edited: ${fileList}${extra}`,
+    });
+    broadcastPulseEntry(mainPulse.id, { session_id: sessionId, entry_type: 'file_change', content: `${label} edited: ${fileList}${extra}` });
   }
 
   // ──────────────────────────────────────────────
@@ -792,8 +888,13 @@ export async function buildServer(opts = {}) {
     }
 
     const payload = request.body;
-    if (!payload || !payload.event || !payload.session_id) {
+    if (!payload || (!payload.event && !payload.hook_event_name) || !payload.session_id) {
       return reply.status(400).send({ error: 'Missing event or session_id' });
+    }
+
+    // Normalize native HTTP hook format: hook_event_name → event
+    if (payload.hook_event_name && !payload.event) {
+      payload.event = payload.hook_event_name;
     }
 
     const { event, session_id } = payload;
@@ -862,6 +963,103 @@ export async function buildServer(opts = {}) {
           fastify.log.warn({ err, session_id: snapshotSid }, 'Snapshot capture failed');
         }
       });
+
+      // Auto-subscribe to main pulse
+      const startedSession = db.getSession(session_id);
+      if (startedSession?.project && startedSession?.pulse_enabled) {
+        try {
+          const mainPulse = pulse.getOrCreateMainPulse(startedSession.project);
+          if (mainPulse) db.addPulseMember(mainPulse.id, session_id);
+        } catch { /* ignore */ }
+      }
+    }
+
+    // 1b. Handle SubagentStart — create child session
+    if (event === 'SubagentStart') {
+      const agentId = payload.agent_id || session_id;
+      db.upsertSession({
+        session_id: agentId,
+        cwd: payload.cwd,
+        model: payload.model,
+        transcript: payload.transcript_path,
+        cli_type: payload.cli_type || 'claude',
+      });
+      db.setParentSession(agentId, payload.parent_session_id || session_id);
+      // Inherit project from parent
+      const parentSession = db.getSession(payload.parent_session_id || session_id);
+      if (parentSession?.project) {
+        db.updateSession(agentId, { project: parentSession.project });
+        // Auto-subscribe child to main pulse
+        try {
+          const mainPulse = pulse.getOrCreateMainPulse(parentSession.project);
+          if (mainPulse) db.addPulseMember(mainPulse.id, agentId);
+        } catch { /* ignore */ }
+      }
+      const childSession = db.getSession(agentId);
+      if (childSession) broadcastSessionUpdate(childSession);
+    }
+
+    // 1c. Handle SubagentStop — mark child stopped, store pulse entry
+    if (event === 'SubagentStop') {
+      const agentId = payload.agent_id || session_id;
+      db.updateStatus(agentId, 'stopped');
+      // Store last assistant message as pulse entry if substantive
+      if (payload.last_assistant_message && payload.last_assistant_message.length > 20) {
+        const childSession = db.getSession(agentId);
+        if (childSession?.project) {
+          const mainPulse = pulse.getOrCreateMainPulse(childSession.project);
+          if (mainPulse) {
+            const label = childSession.label || agentId.slice(0, 8);
+            db.insertPulseEntry({
+              pulse_id: mainPulse.id,
+              session_id: agentId,
+              entry_type: 'briefing',
+              content: `Subagent ${label} completed: ${payload.last_assistant_message.slice(0, 500)}`,
+            });
+            broadcastPulseEntry(mainPulse.id, { session_id: agentId, entry_type: 'briefing' });
+          }
+        }
+      }
+      handleSessionEnded(agentId);
+      const childSession = db.getSession(agentId);
+      if (childSession) broadcastSessionUpdate(childSession);
+    }
+
+    // 1d. Handle TaskCreated/TaskCompleted — create status pulse entries
+    if (event === 'TaskCreated' || event === 'TaskCompleted') {
+      const sess = db.getSession(session_id);
+      if (sess?.project) {
+        const mainPulse = pulse.getOrCreateMainPulse(sess.project);
+        if (mainPulse) {
+          const label = sess.label || session_id.slice(0, 8);
+          const taskDesc = payload.task_description || payload.tool_input || '';
+          db.insertPulseEntry({
+            pulse_id: mainPulse.id,
+            session_id,
+            entry_type: 'status',
+            content: `${label}: ${event === 'TaskCreated' ? 'Started' : 'Completed'} task${taskDesc ? ' — ' + taskDesc.slice(0, 200) : ''}`,
+          });
+          broadcastPulseEntry(mainPulse.id, { session_id, entry_type: 'status' });
+        }
+      }
+    }
+
+    // 1e. Handle TeammateIdle — store last_idle_signal on session
+    if (event === 'TeammateIdle') {
+      db.setLastIdleSignal(session_id, new Date().toISOString());
+    }
+
+    // 1f. Handle SessionEnd — mark stopped and run end-of-session logic
+    if (event === 'SessionEnd') {
+      const sess = db.getSession(session_id);
+      if (sess && sess.tmux_target) {
+        if (sess.status !== 'stopped') {
+          db.updateStatus(session_id, 'stopped');
+        }
+        handleSessionEnded(session_id);
+        const updated = db.getSession(session_id);
+        if (updated) broadcastSessionUpdate(updated);
+      }
     }
 
     // 2. Update session status (with auto-approve logic for PermissionRequest)
@@ -870,8 +1068,9 @@ export async function buildServer(opts = {}) {
       // Stop fires at the end of each Claude turn, including when a turn is paused
       // waiting for a PermissionRequest. Only set 'active' if we're not waiting —
       // PermissionRequest may have already fired and set 'waiting_permission'.
+      // Also don't revert a killed session (status=stopped) back to active.
       const currentStatus = db.getSession(session_id)?.status;
-      if (currentStatus !== 'waiting_permission') {
+      if (currentStatus !== 'waiting_permission' && currentStatus !== 'stopped') {
         db.updateStatus(session_id, 'active');
       }
     } else if (event === 'PermissionRequest') {
@@ -919,11 +1118,26 @@ export async function buildServer(opts = {}) {
           if (session.project) {
             const conflicts = db.getActiveFileConflicts(session.project);
             if (conflicts.length > 0) updateMsg.file_conflicts = conflicts;
-            schedulePulseRegeneration(session.project, 10000);
           }
           const msg = JSON.stringify(updateMsg);
           for (const client of dashboardClients) {
             try { if (client.readyState === 1) client.send(msg); } catch { /* client gone */ }
+          }
+
+          // File change debounce: accumulate file edits and batch into pulse entry every 30s
+          if (session.project) {
+            let pending = fileChangeDebounce.get(session_id);
+            if (!pending) {
+              pending = { files: new Map(), timer: null };
+              fileChangeDebounce.set(session_id, pending);
+            }
+            pending.files.set(payload.file_path, payload.tool_name || 'unknown');
+            if (pending.timer) clearTimeout(pending.timer);
+            pending.timer = setTimeout(() => {
+              flushFileChanges(session_id, pending);
+              pending.files.clear();
+              fileChangeDebounce.delete(session_id);
+            }, 30_000);
           }
         }
       }
@@ -951,11 +1165,6 @@ export async function buildServer(opts = {}) {
       auto_approved: autoApproved || undefined,
     });
     if (session) broadcastSessionUpdate(session);
-
-    // 5b. Trigger pulse regeneration for SessionStart/Stop events with a project
-    if ((event === 'SessionStart' || event === 'Stop') && session?.project) {
-      schedulePulseRegeneration(session.project, 2000);
-    }
 
     // 6. Web Push notification for permission requests (skip auto-approved — resolved silently).
     if (!autoApproved && event === 'PermissionRequest') {
@@ -1020,6 +1229,24 @@ export async function buildServer(opts = {}) {
     const session = db.getSession(request.params.id);
     if (!session) return reply.status(404).send({ error: 'Session not found' });
     db.updateSession(request.params.id, { label, tmux_target, project, pulse_enabled, auto_approve });
+
+    // Pulse membership bridging: toggling pulse_enabled also subscribes/unsubscribes from main pulse
+    if (pulse_enabled !== undefined) {
+      const effectiveProject = project !== undefined ? project : session.project;
+      if (effectiveProject) {
+        try {
+          const mainPulse = pulse.getOrCreateMainPulse(effectiveProject);
+          if (mainPulse) {
+            if (pulse_enabled === 1) {
+              db.addPulseMember(mainPulse.id, request.params.id);
+            } else {
+              db.removePulseMember(mainPulse.id, request.params.id);
+            }
+          }
+        } catch { /* ignore */ }
+      }
+    }
+
     const updated = db.getSession(request.params.id);
     broadcastSessionUpdate(updated);
     return updated;
@@ -1056,7 +1283,7 @@ export async function buildServer(opts = {}) {
       // Inject pulse context into the prompt if a project is specified
       let promptWithPulse = initialPrompt;
       if (project && initialPrompt) {
-        const pulseText = pulse.getPulseForPrompt(project);
+        const pulseText = pulse.assembleProjectPulseContext(project);
         if (pulseText.trim()) {
           promptWithPulse = `[Project context — auto-generated by Control Center]\n${pulseText}\n[End project context]\n\n${initialPrompt}`;
         }
@@ -1093,6 +1320,14 @@ export async function buildServer(opts = {}) {
 
         // Watch for the transcript file to appear in ~/.codex/sessions/
         discoverCodexTranscript(sessionId, sessionCwd);
+
+        // Auto-subscribe to main pulse
+        if (project) {
+          try {
+            const mainPulse = pulse.getOrCreateMainPulse(project);
+            if (mainPulse) db.addPulseMember(mainPulse.id, sessionId);
+          } catch { /* ignore */ }
+        }
 
         const session = db.getSession(sessionId);
         if (session) broadcastSessionUpdate(session);
@@ -1163,14 +1398,8 @@ export async function buildServer(opts = {}) {
     const updated = db.getSession(request.params.id);
     broadcastSessionUpdate(updated);
 
-    // Notify dashboard if a todo was linked to this session
-    const todo = db.getTodoBySessionId(request.params.id);
-    if (todo) {
-      const msg = JSON.stringify({ type: 'todo_session_stopped', todo_id: todo.id, session_id: request.params.id });
-      for (const client of dashboardClients) {
-        try { if (client.readyState === 1) client.send(msg); } catch {}
-      }
-    }
+    // Fire-and-forget session-end handling (TODO notification, pulse briefing, team completion)
+    handleSessionEnded(request.params.id);
 
     return reply.status(204).send();
   });
@@ -1468,7 +1697,7 @@ export async function buildServer(opts = {}) {
   });
 
   // ──────────────────────────────────────────────
-  // REST: Project Pulse
+  // REST: Project Pulse (backward-compat — delegates to new system)
   // ──────────────────────────────────────────────
 
   fastify.get('/api/projects/:name/pulse', async (request) => {
@@ -1486,6 +1715,447 @@ export async function buildServer(opts = {}) {
 
   fastify.get('/api/projects/:name/pulse/prompt', async (request) => {
     return { text: pulse.getPulseForPrompt(request.params.name) };
+  });
+
+  // ──────────────────────────────────────────────
+  // REST: Pulse CRUD (new system)
+  // ──────────────────────────────────────────────
+
+  fastify.get('/api/projects/:name/pulses', async (request) => {
+    // Ensure main pulse exists
+    pulse.getOrCreateMainPulse(request.params.name);
+    return { pulses: db.getPulsesByProject(request.params.name) };
+  });
+
+  fastify.post('/api/projects/:name/pulses', async (request, reply) => {
+    const { name, description } = request.body || {};
+    if (!name || typeof name !== 'string' || name.length > 128) {
+      return reply.status(400).send({ error: 'name is required (max 128 chars)' });
+    }
+    const id = `pulse-${crypto.randomUUID()}`;
+    db.insertPulse({ id, project: request.params.name, name: name.trim(), description: (description || '').trim(), is_main: 0 });
+    const created = db.getPulse(id);
+    return reply.status(201).send(created);
+  });
+
+  fastify.patch('/api/pulses/:id', async (request, reply) => {
+    const existing = db.getPulse(request.params.id);
+    if (!existing) return reply.status(404).send({ error: 'Pulse not found' });
+    const { name, description } = request.body || {};
+    db.updatePulse(request.params.id, {
+      name: name !== undefined ? name.trim() : undefined,
+      description: description !== undefined ? description.trim() : undefined,
+    });
+    broadcastPulseUpdate(request.params.id);
+    return db.getPulse(request.params.id);
+  });
+
+  fastify.delete('/api/pulses/:id', async (request, reply) => {
+    const existing = db.getPulse(request.params.id);
+    if (!existing) return reply.status(404).send({ error: 'Pulse not found' });
+    if (existing.is_main) return reply.status(400).send({ error: 'Cannot delete main pulse' });
+    db.deletePulse(request.params.id);
+    return reply.status(204).send();
+  });
+
+  // Pulse entries
+  fastify.get('/api/pulses/:id/entries', async (request, reply) => {
+    const existing = db.getPulse(request.params.id);
+    if (!existing) return reply.status(404).send({ error: 'Pulse not found' });
+    const limit = clampInt(request.query.limit, 50, 1, 500);
+    const before = request.query.before || null;
+    return { entries: db.getPulseEntries(request.params.id, { limit, before }) };
+  });
+
+  fastify.post('/api/pulses/:id/entries', async (request, reply) => {
+    const existing = db.getPulse(request.params.id);
+    if (!existing) return reply.status(404).send({ error: 'Pulse not found' });
+    const { session_id, entry_type, content } = request.body || {};
+    if (!content || typeof content !== 'string') {
+      return reply.status(400).send({ error: 'content is required' });
+    }
+    const entry = db.insertPulseEntry({
+      pulse_id: request.params.id,
+      session_id: session_id || null,
+      entry_type: entry_type || 'user_note',
+      content: content.trim(),
+    });
+    broadcastPulseEntry(request.params.id, entry);
+    return reply.status(201).send(entry);
+  });
+
+  fastify.delete('/api/pulses/:id/entries/:entryId', async (request, reply) => {
+    const entryId = parseInt(request.params.entryId, 10);
+    if (isNaN(entryId)) return reply.status(400).send({ error: 'Invalid entry id' });
+    db.deletePulseEntry(entryId);
+    return reply.status(204).send();
+  });
+
+  // Dream cycle (Phase 6)
+  fastify.post('/api/pulses/:id/dream', async (request, reply) => {
+    const pulseRow = db.getPulse(request.params.id);
+    if (!pulseRow) return reply.status(404).send({ error: 'Pulse not found' });
+
+    // Gather all entries, separate old (>2h) from recent
+    const allEntries = db.getPulseEntriesAsc(request.params.id);
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const oldEntries = allEntries.filter(e => e.created_at < twoHoursAgo && e.entry_type !== 'compaction');
+    const recentEntries = allEntries.filter(e => e.created_at >= twoHoursAgo);
+
+    if (oldEntries.length < 3) {
+      return { dreamed: false, reason: 'Not enough old entries to consolidate' };
+    }
+
+    // Gather uncaptured session transcripts
+    const lastDreamTs = db.default.prepare("SELECT value FROM stats WHERE key = @key").get({ key: `dream:${request.params.id}:last_run` })?.value || '1970-01-01';
+    let transcriptExcerpts = '';
+    try {
+      const unbriefedSessions = db.default.prepare(
+        `SELECT s.* FROM sessions s WHERE s.project = @project AND s.status = 'stopped'
+         AND s.updated_at > @since AND (SELECT COUNT(*) FROM events WHERE session_id = s.session_id) > 3
+         AND s.session_id NOT IN (SELECT pe.session_id FROM pulse_entries pe WHERE pe.pulse_id = @pulse_id AND pe.entry_type = 'briefing' AND pe.session_id IS NOT NULL)`
+      ).all({ project: pulseRow.project, since: lastDreamTs, pulse_id: request.params.id });
+
+      for (const sess of unbriefedSessions.slice(0, 5)) {
+        if (!sess.transcript) continue;
+        const structured = readTranscriptStructured(sess.transcript, 16384);
+        const assistantMsgs = structured.filter(e => e.type === 'assistant').slice(-5);
+        if (assistantMsgs.length > 0) {
+          const label = sess.label || sess.session_id.slice(0, 8);
+          transcriptExcerpts += `\n--- Session "${label}" (unbriefed) ---\n`;
+          for (const m of assistantMsgs) {
+            transcriptExcerpts += m.content.slice(0, 500) + '\n';
+          }
+        }
+      }
+    } catch (err) {
+      fastify.log.warn('[dream] transcript mining failed:', err.message);
+    }
+
+    // Staleness check
+    const filePaths = new Set();
+    for (const e of allEntries) {
+      const matches = e.content.match(/(?:^|\s)((?:\/|\.\/|~\/)[^\s,]+)/gm);
+      if (matches) matches.forEach(m => filePaths.add(m.trim()));
+    }
+    const staleFiles = [];
+    for (const fp of filePaths) {
+      if (!existsSync(fp)) staleFiles.push(fp);
+    }
+
+    // Build dream prompt
+    const dreamPrompt = `You are performing a dream cycle — a reflective consolidation of this project's shared knowledge base. Synthesize what was learned recently into durable, well-organized knowledge so that future sessions can orient quickly.
+
+## OLD ENTRIES (to consolidate):
+${oldEntries.map(e => `[${e.entry_type}] ${e.session_label || 'System'}: ${e.content}`).join('\n')}
+
+## RECENT ENTRIES (keep as-is, but check for contradictions with old):
+${recentEntries.map(e => `[${e.entry_type}] ${e.session_label || 'System'}: ${e.content}`).join('\n')}
+
+${transcriptExcerpts ? `## UNCAPTURED SESSION ACTIVITY (extract if valuable):\n${transcriptExcerpts}` : ''}
+
+${staleFiles.length > 0 ? `## STALE FILE REFERENCES (these files no longer exist on disk):\n${staleFiles.join('\n')}` : ''}
+
+Tasks:
+1. Merge and summarize the old entries into a concise knowledge document
+2. If any old entries contradict newer ones, resolve in favor of newer information
+3. Extract any valuable patterns or decisions from uncaptured session excerpts
+4. Remove or update any references to stale file paths
+5. Output a single consolidated summary as markdown (500 words max)`;
+
+    // Try to spawn headless Claude Code for the dream
+    try {
+      const proc = spawn('claude', ['-p', '-', '--output-format', 'json', '--max-turns', '1'], {
+        env: { ...process.env, DISABLE_HOOKS: '1' },
+      });
+
+      const killTimer = setTimeout(() => { proc.kill(); }, 180_000);
+
+      proc.stdin.write(dreamPrompt);
+      proc.stdin.end();
+
+      let stdout = '';
+      proc.stdout.on('data', (chunk) => { stdout += chunk; });
+
+      proc.on('close', (code) => {
+        clearTimeout(killTimer);
+        let summary = '';
+        try {
+          const result = JSON.parse(stdout);
+          summary = result.result || result.content || stdout;
+        } catch {
+          // If not JSON, use raw output
+          summary = stdout.trim();
+        }
+
+        if (summary && summary.length > 20) {
+          // Atomic: store compaction entry + delete old entries
+          const oldIds = oldEntries.map(e => e.id);
+          db.transaction(() => {
+            db.insertPulseEntry({
+              pulse_id: request.params.id,
+              session_id: null,
+              entry_type: 'compaction',
+              content: summary.slice(0, 10000),
+            });
+            if (oldIds.length > 0) {
+              db.deletePulseEntriesByIds(oldIds);
+            }
+          })();
+          db.setStat(`dream:${request.params.id}:last_run`, new Date().toISOString());
+          broadcastPulseEntry(request.params.id, { session_id: null, entry_type: 'compaction' });
+          console.log(`[dream] Consolidated ${oldEntries.length} old entries into 1 compaction entry for pulse ${request.params.id}`);
+        } else {
+          console.log(`[dream] Claude returned insufficient output (${summary.length} chars), skipping`);
+        }
+      });
+
+      return { dreaming: true, oldEntries: oldEntries.length, recentEntries: recentEntries.length };
+    } catch (err) {
+      // Claude CLI not available — do a simple fallback consolidation
+      fastify.log.warn('[dream] Claude CLI not available, using simple consolidation:', err.message);
+      const simpleSummary = oldEntries.map(e => `- [${e.entry_type}] ${e.content.slice(0, 200)}`).join('\n');
+      const oldIds = oldEntries.map(e => e.id);
+      db.transaction(() => {
+        db.insertPulseEntry({
+          pulse_id: request.params.id,
+          session_id: null,
+          entry_type: 'compaction',
+          content: `## Consolidated Knowledge\n${simpleSummary}`,
+        });
+        if (oldIds.length > 0) {
+          db.deletePulseEntriesByIds(oldIds);
+        }
+      })();
+      db.setStat(`dream:${request.params.id}:last_run`, new Date().toISOString());
+      broadcastPulseEntry(request.params.id, { session_id: null, entry_type: 'compaction' });
+      return { dreamed: true, fallback: true, oldEntries: oldEntries.length };
+    }
+  });
+
+  // Pulse members
+  fastify.get('/api/pulses/:id/members', async (request, reply) => {
+    const existing = db.getPulse(request.params.id);
+    if (!existing) return reply.status(404).send({ error: 'Pulse not found' });
+    return { members: db.getPulseMembers(request.params.id) };
+  });
+
+  fastify.post('/api/pulses/:id/members', async (request, reply) => {
+    const existing = db.getPulse(request.params.id);
+    if (!existing) return reply.status(404).send({ error: 'Pulse not found' });
+    const { session_id } = request.body || {};
+    if (!session_id) return reply.status(400).send({ error: 'session_id is required' });
+    db.addPulseMember(request.params.id, session_id);
+    return reply.status(201).send({ ok: true });
+  });
+
+  fastify.delete('/api/pulses/:id/members/:sessionId', async (request, reply) => {
+    db.removePulseMember(request.params.id, request.params.sessionId);
+    return reply.status(204).send();
+  });
+
+  // Session pulse operations
+  fastify.post('/api/sessions/:id/brief', async (request, reply) => {
+    const session = db.getSession(request.params.id);
+    if (!session) return reply.status(404).send({ error: 'Session not found' });
+    if (!session.tmux_target) return reply.status(400).send({ error: 'No tmux target linked' });
+    if (session.status === 'stopped') return reply.status(400).send({ error: 'Session is stopped' });
+
+    const { pulse_id } = request.body || {};
+    // Determine target pulse — use provided pulse_id or fallback to main pulse
+    let targetPulseId = pulse_id;
+    if (!targetPulseId && session.project) {
+      const mainPulse = pulse.getOrCreateMainPulse(session.project);
+      targetPulseId = mainPulse?.id;
+    }
+    if (!targetPulseId) return reply.status(400).send({ error: 'No target pulse' });
+
+    // Check idle: transcript-based or last_idle_signal
+    const idle = isLastTurnComplete(session.transcript) ||
+      (session.last_idle_signal && (Date.now() - new Date(session.last_idle_signal).getTime()) < 60_000);
+    if (!idle) return reply.status(409).send({ error: 'Session is not idle — try again when the agent is waiting for input' });
+
+    // Send briefing prompt via tmux
+    const briefPrompt = `Summarize your work for the shared project knowledge base. Include:
+- What you changed and why
+- Key decisions or trade-offs you made
+- Anything the next person working here should know
+- Open questions or blockers
+Be concise — 200 words max. This will be read by other agents.`;
+
+    try {
+      const target = session.tmux_target;
+      if (!/^[a-zA-Z0-9_-]+$/.test(target)) return reply.status(400).send({ error: 'Invalid tmux target' });
+      const buf = `cc-brief-${Date.now()}`;
+      execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: briefPrompt, timeout: 10_000 });
+      execFileSync('tmux', ['paste-buffer', '-t', target, '-b', buf, '-d'], { timeout: 10_000 });
+      execFileSync('tmux', ['send-keys', '-t', target, 'Enter'], { timeout: 10_000 });
+
+      const promptSentAt = Date.now();
+
+      // Poll transcript for response (async, fire-and-forget from the HTTP response)
+      (async () => {
+        const maxWait = 120_000;
+        const pollInterval = 3_000;
+        const startTime = Date.now();
+
+        while (Date.now() - startTime < maxWait) {
+          await new Promise(r => setTimeout(r, pollInterval));
+          const entries = readTranscriptStructured(session.transcript, 32768);
+          // Find first assistant entry after our prompt timestamp
+          for (let i = entries.length - 1; i >= 0; i--) {
+            const e = entries[i];
+            if (e.type === 'assistant' && e.timestamp) {
+              const entryTime = new Date(e.timestamp).getTime();
+              if (entryTime > promptSentAt && e.stop_reason && e.stop_reason !== 'tool_use') {
+                // Found the briefing response
+                if (e.content && e.content.trim().length > 10) {
+                  db.insertPulseEntry({
+                    pulse_id: targetPulseId,
+                    session_id: session.session_id,
+                    entry_type: 'briefing',
+                    content: e.content.trim().slice(0, 5000),
+                  });
+                  broadcastPulseEntry(targetPulseId, {
+                    session_id: session.session_id,
+                    entry_type: 'briefing',
+                    content: e.content.trim().slice(0, 200) + '...',
+                  });
+                }
+                return;
+              }
+            }
+          }
+        }
+        fastify.log.warn(`[brief] Timeout waiting for briefing response from session ${request.params.id}`);
+      })().catch(err => fastify.log.error('[brief]', err));
+
+      return { ok: true, message: 'Briefing prompt sent — response will be captured automatically' };
+    } catch (err) {
+      return reply.status(500).send({ error: err.message });
+    }
+  });
+
+  fastify.post('/api/sessions/:id/sync-pulse', async (request, reply) => {
+    const session = db.getSession(request.params.id);
+    if (!session) return reply.status(404).send({ error: 'Session not found' });
+    if (!session.tmux_target) return reply.status(400).send({ error: 'No tmux target linked' });
+    // Assemble pulse context for this session's subscriptions and inject into tmux
+    const context = pulse.assembleSessionPulseContext(request.params.id);
+    if (!context.trim()) return { synced: false, reason: 'No pulse content' };
+    try {
+      const target = session.tmux_target;
+      if (!/^[a-zA-Z0-9_-]+$/.test(target)) return reply.status(400).send({ error: 'Invalid tmux target' });
+      const text = `[Pulse sync — auto-injected by Control Center]\n${context}\n[End pulse sync]`;
+      const buf = `cc-pulse-${Date.now()}`;
+      execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: text, timeout: 10_000 });
+      execFileSync('tmux', ['paste-buffer', '-t', target, '-b', buf, '-d'], { timeout: 10_000 });
+      execFileSync('tmux', ['send-keys', '-t', target, 'Enter'], { timeout: 10_000 });
+      return { synced: true };
+    } catch (err) {
+      return reply.status(500).send({ error: err.message });
+    }
+  });
+
+  fastify.get('/api/pulses/:id/content', async (request, reply) => {
+    const existing = db.getPulse(request.params.id);
+    if (!existing) return reply.status(404).send({ error: 'Pulse not found' });
+    const content = pulse.assemblePulseContent(request.params.id);
+    return { content };
+  });
+
+  fastify.get('/api/sessions/:id/pulse-context', async (request, reply) => {
+    const session = db.getSession(request.params.id);
+    if (!session) return reply.status(404).send({ error: 'Session not found' });
+    const context = pulse.assembleSessionPulseContext(request.params.id);
+    return { context };
+  });
+
+  // ──────────────────────────────────────────────
+  // REST: Agent Team Orchestration (Phase 8)
+  // ──────────────────────────────────────────────
+
+  fastify.get('/api/team-templates', async () => db.getTeamTemplates());
+
+  fastify.post('/api/team-templates', async (request, reply) => {
+    const { name, description, roles, coordinator_prompt, project } = request.body || {};
+    if (!name || typeof name !== 'string' || name.length > 128) {
+      return reply.status(400).send({ error: 'name is required (max 128 chars)' });
+    }
+    const id = `tt-${crypto.randomUUID()}`;
+    db.insertTeamTemplate({
+      id,
+      name: name.trim(),
+      description: (description || '').trim(),
+      roles: typeof roles === 'string' ? roles : JSON.stringify(roles || []),
+      coordinator_prompt: (coordinator_prompt || '').trim(),
+      project: (project || '').trim(),
+    });
+    return reply.status(201).send(db.getTeamTemplate(id));
+  });
+
+  fastify.put('/api/team-templates/:id', async (request, reply) => {
+    const existing = db.getTeamTemplate(request.params.id);
+    if (!existing) return reply.status(404).send({ error: 'Team template not found' });
+    const { name, description, roles, coordinator_prompt, project } = request.body || {};
+    db.updateTeamTemplate(request.params.id, {
+      name: name !== undefined ? name.trim() : undefined,
+      description: description !== undefined ? description.trim() : undefined,
+      roles: roles !== undefined ? (typeof roles === 'string' ? roles : JSON.stringify(roles)) : undefined,
+      coordinator_prompt: coordinator_prompt !== undefined ? coordinator_prompt.trim() : undefined,
+      project: project !== undefined ? project.trim() : undefined,
+    });
+    return db.getTeamTemplate(request.params.id);
+  });
+
+  fastify.delete('/api/team-templates/:id', async (request, reply) => {
+    const existing = db.getTeamTemplate(request.params.id);
+    if (!existing) return reply.status(404).send({ error: 'Team template not found' });
+    // Prevent deletion if active team instances reference it
+    const instanceCount = db.getTeamInstancesByTemplate(request.params.id);
+    if (instanceCount > 0) {
+      return reply.status(400).send({ error: 'Cannot delete template with active team instances' });
+    }
+    db.deleteTeamTemplate(request.params.id);
+    return reply.status(204).send();
+  });
+
+  fastify.post('/api/team-templates/:id/launch', async (request, reply) => {
+    const template = db.getTeamTemplate(request.params.id);
+    if (!template) return reply.status(404).send({ error: 'Team template not found' });
+    const { objective, project: projectOverride } = request.body || {};
+    const teamProject = projectOverride || template.project;
+    if (!teamProject) return reply.status(400).send({ error: 'Project must be specified (template or request body)' });
+
+    // Create team instance
+    const instanceId = `team-${crypto.randomUUID()}`;
+    db.insertTeamInstance({
+      id: instanceId,
+      template_id: template.id,
+      project: teamProject,
+      lead_session_id: null, // will be set when first session starts
+      objective: objective || template.description || '',
+    });
+
+    return reply.status(201).send({ id: instanceId, template_id: template.id, project: teamProject, status: 'pending' });
+  });
+
+  fastify.get('/api/teams', async (request) => {
+    const { project } = request.query || {};
+    return { teams: db.getTeamInstances(project) };
+  });
+
+  fastify.get('/api/teams/:id', async (request, reply) => {
+    const team = db.getTeamInstance(request.params.id);
+    if (!team) return reply.status(404).send({ error: 'Team instance not found' });
+    return team;
+  });
+
+  fastify.post('/api/teams/:id/stop', async (request, reply) => {
+    const team = db.getTeamInstance(request.params.id);
+    if (!team) return reply.status(404).send({ error: 'Team instance not found' });
+    db.updateTeamInstance(request.params.id, { status: 'failed', completed_at: new Date().toISOString() });
+    return { ok: true };
   });
 
   // ──────────────────────────────────────────────
@@ -1615,7 +2285,7 @@ ${todo.details || ''}
 Begin by reading CLAUDE.md and the relevant source files, then present your implementation plan.`;
 
     // Inject pulse context if available
-    const pulseText = pulse.getPulseForPrompt(todo.project);
+    const pulseText = pulse.assembleProjectPulseContext(todo.project);
     if (pulseText.trim()) {
       initialPrompt = `[Project context — auto-generated by Control Center]\n${pulseText}\n[End project context]\n\n${initialPrompt}`;
     }
@@ -1737,6 +2407,35 @@ const isMainModule = process.argv[1] && import.meta.url === pathToFileURL(proces
 if (isMainModule) {
   const server = await buildServer();
 
+  // Migrate file-based pulses to DB on startup
+  try {
+    pulse.migrateFromFiles();
+    console.log('[startup] Pulse migration complete');
+  } catch (err) {
+    console.warn('[startup] Pulse migration failed:', err.message);
+  }
+
+  // Seed pre-built team templates
+  try {
+    const teamTemplatesPath = join(__dirname, 'data', 'team-templates.json');
+    if (existsSync(teamTemplatesPath)) {
+      const builtinTemplates = JSON.parse(readFileSync(teamTemplatesPath, 'utf8'));
+      for (const t of builtinTemplates) {
+        db.insertTeamTemplateIgnore({
+          id: t.id,
+          name: t.name,
+          description: t.description || '',
+          roles: t.roles,
+          coordinator_prompt: t.coordinator_prompt,
+          project: t.project || null,
+        });
+      }
+      console.log(`[startup] Seeded ${builtinTemplates.length} team template(s)`);
+    }
+  } catch (err) {
+    console.warn('[startup] Team template seeding failed:', err.message);
+  }
+
   // Zombie cleanup on startup: mark sessions as stopped if their tmux target
   // is gone and they haven't had a heartbeat in 4+ hours.
   {
@@ -1754,6 +2453,9 @@ if (isMainModule) {
         db.default.prepare(`DELETE FROM heartbeats WHERE ${staleFilter}`).run();
         db.default.prepare(`DELETE FROM file_edits WHERE ${staleFilter}`).run();
         db.default.prepare(`DELETE FROM todos WHERE session_id IS NOT NULL AND ${staleFilter}`).run();
+        db.default.prepare(`DELETE FROM pulse_members WHERE ${staleFilter}`).run();
+        // Clear team instance lead refs pointing to stale sessions
+        try { db.clearTeamLeadRefs(config.sessionCleanupDays); } catch { /* table may not exist */ }
         const result = db.deleteStoppedSessionsOlderThan(config.sessionCleanupDays);
         if (result.changes > 0) {
           console.log(`[cleanup] Deleted ${result.changes} stopped session(s) older than ${config.sessionCleanupDays} days`);

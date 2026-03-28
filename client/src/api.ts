@@ -2,6 +2,7 @@ import type {
   Session, SessionEvent, TranscriptEntry, ContextUsage, FileEdit,
   Todo, PulseDocument, ProjectPreset, SessionTemplate,
   ServerInfo, VersionInfo, Stats,
+  Pulse, PulseEntry, TeamTemplate, TeamInstance,
 } from './types';
 
 const BASE = '';
@@ -105,7 +106,7 @@ export const api = {
   triggerUpdate: () => post<{ status: string }>('/api/update'),
   cleanupZombies: () => post<{ cleaned: number }>('/api/sessions/cleanup-zombies'),
 
-  // Phase 2
+  // Snapshots & History
   getSnapshotDiff: (id: string) =>
     fetchJson<{ added: string[]; modified: string[]; deleted: string[] }>(`/api/sessions/${id}/snapshot-diff`),
   revertSession: (id: string) =>
@@ -121,11 +122,58 @@ export const api = {
     return fetchJson<{ sessions: Session[]; total: number }>(`/api/sessions/history?${sp}`);
   },
 
-  // Phase 3
+  // Pulse (backward compat)
   getPulse: (project: string) =>
     fetchJson<PulseDocument>(`/api/projects/${encodeURIComponent(project)}/pulse`),
   updatePulseNotes: (project: string, notes: string) =>
     put<{ ok: boolean }>(`/api/projects/${encodeURIComponent(project)}/pulse/notes`, { notes }),
+
+  // Pulse CRUD
+  getProjectPulses: (project: string) =>
+    fetchJson<{ pulses: Pulse[] }>(`/api/projects/${encodeURIComponent(project)}/pulses`).then(r => r.pulses),
+  createPulse: (project: string, data: { name: string; description?: string }) =>
+    post<Pulse>(`/api/projects/${encodeURIComponent(project)}/pulses`, data),
+  updatePulseMetadata: (id: string, data: { name?: string; description?: string }) =>
+    patch<Pulse>(`/api/pulses/${id}`, data),
+  deletePulse: (id: string) =>
+    del<{ ok: boolean }>(`/api/pulses/${id}`),
+
+  // Pulse entries
+  getPulseEntries: (id: string, limit?: number, before?: string) => {
+    const params = new URLSearchParams();
+    if (limit) params.set('limit', String(limit));
+    if (before) params.set('before', before);
+    const qs = params.toString();
+    return fetchJson<{ entries: PulseEntry[] }>(`/api/pulses/${id}/entries${qs ? '?' + qs : ''}`).then(r => r.entries);
+  },
+  addPulseEntry: (id: string, data: { content: string; entry_type?: string }) =>
+    post<PulseEntry>(`/api/pulses/${id}/entries`, data),
+  deletePulseEntry: (pulseId: string, entryId: number) =>
+    del<{ ok: boolean }>(`/api/pulses/${pulseId}/entries/${entryId}`),
+  triggerDream: (id: string) =>
+    post<{ ok: boolean }>(`/api/pulses/${id}/dream`),
+
+  // Pulse members
+  getPulseMembers: (id: string) =>
+    fetchJson<Array<{ session_id: string; label: string; status: string }>>(`/api/pulses/${id}/members`),
+  addPulseMember: (pulseId: string, sessionId: string) =>
+    post<{ ok: boolean }>(`/api/pulses/${pulseId}/members`, { session_id: sessionId }),
+  removePulseMember: (pulseId: string, sessionId: string) =>
+    del<{ ok: boolean }>(`/api/pulses/${pulseId}/members/${sessionId}`),
+
+  // Pulse content
+  getPulseContent: (id: string) =>
+    fetchJson<{ content: string }>(`/api/pulses/${id}/content`),
+  getSessionPulseContext: (id: string) =>
+    fetchJson<{ context: string }>(`/api/sessions/${id}/pulse-context`),
+
+  // Briefing & Sync
+  triggerBrief: (id: string, pulseId: string) =>
+    post<{ ok: boolean }>(`/api/sessions/${id}/brief`, { pulse_id: pulseId }),
+  syncPulse: (id: string) =>
+    post<{ ok: boolean }>(`/api/sessions/${id}/sync-pulse`),
+
+  // Todos
   getTodos: (project: string) =>
     fetchJson<{ todos: Todo[] }>(`/api/todos?project=${encodeURIComponent(project)}`),
   createTodo: (data: { project: string; title: string; details?: string; priority?: number }) =>
@@ -143,4 +191,23 @@ export const api = {
     post<{ ok: boolean }>('/api/push/subscribe', sub),
   unsubscribePush: (endpoint: string) =>
     del<{ ok: boolean }>('/api/push/unsubscribe', { endpoint }),
+
+  // Team templates
+  getTeamTemplates: () => fetchJson<TeamTemplate[]>('/api/team-templates'),
+  createTeamTemplate: (data: { name: string; description?: string; roles: unknown; coordinator_prompt: string; project?: string }) =>
+    post<TeamTemplate>('/api/team-templates', data),
+  updateTeamTemplate: (id: string, data: Partial<TeamTemplate>) =>
+    put<TeamTemplate>(`/api/team-templates/${id}`, data),
+  deleteTeamTemplate: (id: string) =>
+    del<{ ok: boolean }>(`/api/team-templates/${id}`),
+  launchTeam: (templateId: string, data: { objective: string; project?: string }) =>
+    post<TeamInstance>(`/api/team-templates/${templateId}/launch`, data),
+
+  // Team instances
+  getTeams: (project?: string) => {
+    const qs = project ? `?project=${encodeURIComponent(project)}` : '';
+    return fetchJson<{ teams: TeamInstance[] }>(`/api/teams${qs}`);
+  },
+  getTeam: (id: string) => fetchJson<TeamInstance>(`/api/teams/${id}`),
+  stopTeam: (id: string) => post<{ ok: boolean }>(`/api/teams/${id}/stop`),
 };
