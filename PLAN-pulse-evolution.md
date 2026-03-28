@@ -59,6 +59,9 @@ The current Pulse system (`pulse.js`) is a read-only status display:
 
 **Pulse IDs** are generated with `crypto.randomUUID()` (Node.js built-in, no dependency).
 Main pulses use the deterministic ID `main-{sanitized_project}` for easy lookup.
+Sanitization uses the same function as current `pulse.js` (line 9):
+`project.replace(/[^a-zA-Z0-9_-]/g, '_')` — keeps case, replaces spaces and special
+chars with `_`. Example: "My App" → `main-My_App`, "backend-api" → `main-backend-api`.
 
 ```sql
 -- Named pulse documents (one "Main" per project + user-created topic pulses)
@@ -95,6 +98,7 @@ CREATE TABLE IF NOT EXISTS pulse_entries (
 
 CREATE INDEX IF NOT EXISTS idx_pulse_entries_pulse ON pulse_entries(pulse_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_pulse_entries_session ON pulse_entries(session_id);
+CREATE INDEX IF NOT EXISTS idx_pulse_members_session ON pulse_members(session_id);
 ```
 
 **Note:** `db.js` already sets `PRAGMA foreign_keys = ON` (line 8), so CASCADE works.
@@ -119,7 +123,14 @@ does NOT cascade — entries survive session deletion since they're project know
 
 ### Migration from Current Pulse
 
-- Auto-create a main pulse for each project that has sessions
+- **Discover existing projects** via two sources (union, deduplicate):
+  1. `SELECT DISTINCT project FROM sessions WHERE project IS NOT NULL` — covers all
+     projects that have sessions (even those without pulse notes)
+  2. Scan `data/pulse/` directory for `*.json` files — the filename (minus `.json`) is
+     the project name. Covers projects that have user notes but whose sessions may have
+     been cleaned up. Use the same sanitization as the current `pulse.js` (line 9:
+     `project.replace(/[^a-zA-Z0-9_-]/g, '_')`) to match filenames to project names.
+- Auto-create a main pulse for each discovered project
 - Migrate existing `data/pulse/{project}.json` user notes as `user_note` entries
 - Keep the old `data/pulse/` files as backup, stop writing to them
 - The `pulse_enabled` field on sessions maps to pulse_members: enabled = member
@@ -192,11 +203,16 @@ User clicks "Brief" on a session card, selects a target pulse:
 If neither signal is available, queue the request and re-check every 5 seconds
 (up to 120s timeout).
 
-**Response capture:** After sending the briefing prompt via `load-buffer`/`paste-buffer`
-(same mechanism as `POST /api/sessions/:id/input`), CC polls the session's transcript
-JSONL file. It uses `readTranscriptStructured()` to look for a new assistant entry with
-a timestamp after the prompt was sent. Poll every 3 seconds, timeout after 120 seconds.
-On timeout, log a warning and don't create an entry.
+**Response capture:** The idle detection guard (above) ensures the agent is NOT
+mid-response before sending the briefing prompt. This eliminates the ambiguity of
+overlapping responses. After sending the prompt via `load-buffer`/`paste-buffer`
+(same mechanism as `POST /api/sessions/:id/input`), CC records `promptSentAt =
+Date.now()` and polls the session's transcript JSONL file. It uses
+`readTranscriptStructured()` to find the first assistant entry where `entry.timestamp
+> promptSentAt` AND the entry has a `stop_reason` that is NOT `'tool_use'` (i.e., the
+agent finished generating, not just a tool call mid-response). This captures the final
+text of the briefing response, skipping any intermediate tool-use turns. Poll every 3
+seconds, timeout after 120 seconds. On timeout, log a warning and don't create an entry.
 
 **Briefing and permissions:** The agent may use tools while generating the briefing
 (e.g., reading files to verify what it changed). If the session's `auto_approve` is set
@@ -213,19 +229,18 @@ When `handleSessionEnded()` fires for a session (see "Session-End Detection" sec
    CC attempts to auto-brief. By the time `handleSessionEnded` fires (from the `SessionEnd`
    hook), the agent process has already exited.
 
-2. **Primary path (kill endpoint — agent may still be alive):** When triggered from the
-   Kill endpoint, the tmux kill-session command runs first but the agent may still be
-   processing its shutdown. Check if the tmux pane still exists (`tmux has-session -t
-   <target>`). If yes, attempt the briefing flow from (A) with a shorter timeout (30s).
+2. **Transcript-based extraction (only path):** The agent is always gone by the time
+   `handleSessionEnded` runs — the Kill endpoint calls `execFileSync('tmux', ['kill-session',
+   ...])` synchronously (tmux is dead before `handleSessionEnded` is called), and
+   `SessionEnd` fires after the agent process has already exited. There is no window to
+   brief a live agent. Instead: read the last 10 assistant messages from the transcript
+   via `readTranscriptStructured()`, send them to a temporary headless Claude Code session
+   (via `child_process.spawn` with stdin piping and `--bare` flag — see Dream Cycle
+   "Mechanism" section for the pattern) with the prompt
+   "Summarize this agent's work into a concise briefing for the project knowledge base."
+   Store the result as a `briefing` entry.
 
-3. **Fallback path (agent gone — most common):** Use transcript-based extraction: read
-   the last 10 assistant messages from the transcript via `readTranscriptStructured()`,
-   send them to a temporary headless Claude Code session (via `child_process.execFile`
-   with `--bare` flag to prevent hook spam) with the prompt "Summarize this agent's work
-   into a concise briefing for the project knowledge base." Store the result as a
-   `briefing` entry.
-
-4. **Idle auto-briefing:** For idle sessions (>5 minutes idle, configurable): optionally
+3. **Idle auto-briefing:** For idle sessions (>5 minutes idle, configurable): optionally
    auto-trigger a briefing. This should be a per-pulse setting, defaulting to off, since
    it interrupts the agent.
 
@@ -451,19 +466,35 @@ if (currentStatus !== 'waiting_permission' && currentStatus !== 'stopped') {
 }
 ```
 
-`handleSessionEnded()` performs:
-- Flush pending file_change debounce entries for the session
-- Auto-briefing if session is a pulse member with `tool_count > 3`
-- Team completion check if session is a team lead
-- TODO notification if session is linked to a TODO
-- Broadcast session_update to dashboard
+`handleSessionEnded()` is an **async function** defined in `server.js` (it needs access
+to `db`, pulse functions, debounce maps, and WS broadcast — all in server.js scope).
+Callers invoke it **fire-and-forget** (do NOT await it in request handlers):
+`handleSessionEnded(session_id).catch(err => console.error('[handleSessionEnded]', err))`.
+This ensures the Kill endpoint returns 204 immediately and the SessionEnd hook handler
+responds without blocking.
+
+It performs:
+- Flush pending file_change debounce entries for the session (sync — Map lookup + DB insert)
+- Auto-briefing if session is a pulse member with `tool_count > 3` (async — spawns headless
+  Claude Code, waits for result, stores entry)
+- Team completion check if session is a team lead (sync — DB query + update)
+- TODO notification if session is linked to a TODO (sync — DB query + WS broadcast).
+  This replaces the existing TODO notification in both the Kill endpoint and cleanupZombies.
+- Broadcast session_update to dashboard (sync)
 
 This function is idempotent — calling it multiple times for the same session is safe.
 Uses an in-memory `Set<session_id>` to track sessions already processed. On entry: if
 session_id is in the processed Set, return immediately. Otherwise add it, verify
 `status === 'stopped'`, then proceed. This prevents duplicate auto-briefing, duplicate
-TODO notifications, etc. The Set persists for the server's lifetime; on restart, sessions
-are already stopped and debounce maps are empty, so re-processing is a no-op anyway.
+TODO notifications, etc. The Set persists for the server's lifetime.
+
+**Restart safety:** On server restart, the Set is empty. A late `SessionEnd` event could
+arrive for a session that was already processed before the restart. To prevent re-processing:
+record the server start time (`const SERVER_START = new Date().toISOString()`). In
+`handleSessionEnded`, if `session.updated_at < SERVER_START` (session was stopped in a
+prior server lifetime), skip the substantive work (auto-briefing, TODO notification) —
+only log a debug message. The debounce maps are empty after restart anyway, so the
+debounce flush is naturally a no-op.
 
 ### Subagent Tracking
 
@@ -490,7 +521,13 @@ ALTER TABLE sessions ADD COLUMN last_idle_signal TEXT DEFAULT NULL;
 
 `last_idle_signal` stores the timestamp of the most recent `TeammateIdle` hook event
 for this session. Used as an authoritative idle signal for briefing (more reliable than
-transcript polling). Updated in the `TeammateIdle` handler (Phase 2).
+transcript polling). Updated in the `TeammateIdle` handler (Phase 2). The UPDATE
+statement should also set `updated_at = datetime('now')` so that SessionCard's memo
+comparison (which checks `updated_at`) triggers a re-render when idle signal changes.
+
+**New prepared statements for these columns:**
+- `setParentSession`: `UPDATE sessions SET parent_session_id = @parent_id, updated_at = datetime('now') WHERE session_id = @id` — called from `SubagentStart` handler to link child to parent. Neither `upsertSession` nor `updateSession` accepts `parent_session_id`, so this needs its own statement.
+- `setLastIdleSignal`: `UPDATE sessions SET last_idle_signal = @ts, updated_at = datetime('now') WHERE session_id = @id` — called from `TeammateIdle` handler.
 
 **Query impact:** The `getSession`, `getAllSessions`, `getActiveSessions`, and
 `getSessionsByProject` queries all use `SELECT s.*` so they'll automatically include
@@ -518,21 +555,45 @@ not just one CLI instance's history.
 ### Mechanism
 
 A temporary headless Claude Code process handles the dream cycle, spawned via
-`child_process.execFile` (not tmux — no dashboard card, no hooks):
+`child_process.spawn` with stdin piping (not tmux — no dashboard card, no hooks):
 
 ```javascript
-// execFile is already imported in server.js:
-// import { execFile } from 'node:child_process';
-execFile('claude', [
-  '-p', dreamPrompt,
+// Use spawn (not execFile) with stdin to avoid argv length limits on long prompts.
+// execFile passes the prompt as an argument, which has platform-dependent limits
+// (~128KB on Linux). Dream prompts with many old entries + transcript excerpts
+// can exceed this. Piping via stdin has no practical limit.
+import { spawn } from 'node:child_process';
+
+const proc = spawn('claude', [
+  '-p', '-',                    // '-' reads prompt from stdin
   '--output-format', 'stream-json',
   '--bare'  // skip hooks, MCP servers, CLAUDE.md — prevents this process from
             // firing SessionStart/PostToolUse/SessionEnd hooks back to CC server
-], { timeout: 180_000 }, (err, stdout) => {
+]);
+
+// NOTE: spawn() does NOT accept a `timeout` option (only execFile/exec do).
+// Implement timeout manually with setTimeout + proc.kill().
+const killTimer = setTimeout(() => { proc.kill(); }, 180_000);
+
+proc.stdin.write(dreamPrompt);
+proc.stdin.end();
+
+let stdout = '';
+proc.stdout.on('data', (chunk) => { stdout += chunk; });
+proc.on('close', (code) => {
+  clearTimeout(killTimer);
   // Parse stream-json output: each line is a JSON event.
   // Extract the final assistant message text from the 'result' event.
 });
 ```
+
+**CLI flag verification (required before Phase 6 implementation):** The `--bare` flag
+and `--output-format stream-json` format are assumed based on Claude Code CLI capabilities.
+Before implementing Phase 6, verify these flags exist in the installed Claude Code version:
+`claude --help | grep -E 'bare|output-format'`. If `--bare` is not available, use
+`--no-hooks` or equivalent flag to suppress hook events. If `stream-json` is not available,
+use `--output-format json` and adjust the parsing logic accordingly. The `-p -` (read
+prompt from stdin) pattern should also be verified.
 
 This process:
 - Does NOT appear in session cards — it's a `child_process`, not a tmux session.
@@ -542,7 +603,7 @@ This process:
   unwanted events from these utility processes.
 - Uses Claude Code's own model (not DeepSeek) for better summarization quality
 - Is short-lived: one prompt, one response, then exits automatically
-- Has a 180-second timeout via `execFile` options (longer than basic compaction because
+- Has a 180-second timeout via `setTimeout` + `proc.kill()` (longer than basic compaction because
   the prompt includes transcript excerpts and staleness data)
 - On timeout, the process is killed and the dream is skipped (entries just accumulate)
 
@@ -555,7 +616,11 @@ This process:
 - **Activity-based:** When a session with tool_count > 10 stops without having produced
   a briefing entry (knowledge was likely created but not captured)
 - **Session-count gate:** At least 3 sessions stopped for the project since the last dream
-  (prevents running on idle projects)
+  (prevents running on idle projects). Query:
+  `SELECT COUNT(*) FROM sessions WHERE project = @project AND status = 'stopped'
+  AND updated_at > (SELECT COALESCE(value, '1970-01-01') FROM stats WHERE key = 'dream:' || @pulse_id || ':last_run')`
+  — compares session `updated_at` against stored dream timestamp. Sessions with any
+  `tool_count` are counted (a session with 0 tools still represents user activity).
 
 ### Four-Phase Dream Process
 
@@ -604,10 +669,15 @@ Tasks:
 5. Output a single consolidated summary as markdown
 ```
 
-**Phase 3 — Store:**
+**Phase 3 — Store (atomic):**
+
+Wrap in a single SQLite transaction (`db.transaction(() => { ... })()`) to ensure
+the compaction entry and old entry deletion are atomic. If either fails, neither
+takes effect — the pulse retains its original entries and the dream can retry.
 
 1. Store the response as a `compaction` entry on the pulse
-2. Delete the original "old" entries (the compaction entry replaces them)
+2. Delete the original "old" entries by ID (collect their IDs in Phase 1 Gather step).
+   The compaction entry replaces them.
 3. Recent entries are preserved as-is (they may still be actively relevant)
 4. If transcript mining produced new knowledge, it gets included in the compaction
    entry — no separate entry needed, keeping the pulse clean
@@ -615,11 +685,16 @@ Tasks:
 **Phase 4 — Record:**
 
 1. Store the dream timestamp in the `stats` table (key: `dream:{pulse_id}:last_run`,
-   value: Unix timestamp). This reuses an existing table but requires a new prepared
-   statement — the existing `statsStmts.increment` does `value = value + @delta`
-   (additive), which doesn't work for overwriting timestamps. Add a `statsStmts.set`
-   prepared statement: `INSERT INTO stats (key, value) VALUES (@key, @value)
-   ON CONFLICT(key) DO UPDATE SET value = @value`.
+   value: ISO datetime string stored as TEXT via `new Date().toISOString()`). Although
+   `stats.value` is typed as REAL, SQLite is dynamically typed — storing a TEXT string
+   in a REAL column works fine. Using ISO strings ensures the session-count gate query
+   (`updated_at > value`) performs a correct string comparison (both sides are ISO
+   datetime TEXT). Do NOT use Unix epoch numbers — `updated_at` is ISO TEXT, and
+   SQLite's mixed-type comparison rules would make the filter unreliable.
+   This requires a new prepared statement — the existing `statsStmts.increment` does
+   `value = value + @delta` (additive), which doesn't work for overwriting timestamps.
+   Add a `statsStmts.set` prepared statement: `INSERT INTO stats (key, value)
+   VALUES (@key, @value) ON CONFLICT(key) DO UPDATE SET value = @value`.
 2. Log what the dream did: entry count before/after, how many sessions were mined,
    stale references removed. Log to console (`console.log('[dream]', ...)`). No need
    for a separate entry type — the `compaction` entry itself is the durable record.
@@ -700,7 +775,7 @@ When a briefing exchange occurs (CC prompted the agent for a pulse update):
 | `GET` | `/api/projects/:name/pulses` | All pulses for a project (includes entry counts) |
 | `POST` | `/api/projects/:name/pulses` | `{name, description?}` — create topic pulse |
 | `PATCH` | `/api/pulses/:id` | `{name?, description?}` — update pulse metadata |
-| `DELETE` | `/api/pulses/:id` | Delete pulse + all entries (main pulse cannot be deleted) |
+| `DELETE` | `/api/pulses/:id` | Delete pulse + all entries (CASCADE). Returns 403 if `is_main = 1`. |
 
 ### Pulse Entries
 
@@ -774,6 +849,9 @@ New message types on `/ws/events`:
 { type: 'pulse_member_removed', pulse_id: string, session_id: string }
 
 // Server → client: subagent lifecycle
+// NOTE: subagent_started REPLACES session_update for subagent sessions. The SubagentStart
+// handler must NOT also broadcast session_update, otherwise the frontend adds the session
+// twice. subagent_started carries the full Session object plus parent context.
 { type: 'subagent_started', parent_session_id: string, session: Session }
 { type: 'subagent_stopped', parent_session_id: string, session_id: string }
 
@@ -796,8 +874,8 @@ interface Pulse {
   project: string;
   name: string;
   description: string;
-  is_main: boolean;
-  entry_count: number;
+  is_main: number;              // SQLite INTEGER 0/1, not boolean (matches pulse_enabled, auto_approve convention)
+  entry_count: number;          // computed via subquery: (SELECT COUNT(*) FROM pulse_entries WHERE pulse_id = ?)
   created_at: string;
   updated_at: string;
 }
@@ -820,11 +898,24 @@ interface Session {
   pulses?: Pulse[];             // which pulses this session belongs to
 }
 
-// Note: `pulses` on Session requires a secondary query (pulse_members JOIN pulses
-// WHERE session_id = ?). Don't add it to the main getAllSessions query — that would
-// be N+1. Instead, fetch pulse memberships as a separate batch query in the init
-// WebSocket message and in the sessions list API, or fetch per-session on demand
-// when opening the session detail view.
+// Note: `pulses` on Session requires a secondary query. Don't add it to the main
+// getAllSessions query — that would be N+1. Instead, fetch all memberships in one
+// batch query and merge client-side:
+//
+// WebSocket init message shape (extends existing):
+// {
+//   type: 'init',
+//   sessions: Session[],           // existing — from getAllSessions()
+//   recentEvents: SessionEvent[],  // existing
+//   pulseMemberships: Array<{ session_id: string, pulse_id: string, pulse_name: string, is_main: number }>
+//   // ^ batch query: SELECT pm.session_id, pm.pulse_id, p.name AS pulse_name, p.is_main
+//   //   FROM pulse_members pm JOIN pulses p ON pm.pulse_id = p.id
+//   // Frontend groups by session_id to build each session's pulse list
+// }
+//
+// This adds one query to the init path (bounded by pulse_members row count, typically
+// small). Pulse entry content is NOT included in init — fetched on demand when user
+// opens the PulsePanel.
 
 // Team templates (Phase 8)
 interface TeamRole {
@@ -881,7 +972,11 @@ Pulse rewrite:
    Keep backward-compat wrappers for `getUserNotes()` / `setUserNotes()` / `getPulseForPrompt()`
    that delegate to new system. Add `getOrCreateMainPulse(project)` with lazy creation.
 6. Remove `schedulePulseRegeneration()` from `server.js` — pulse content is now assembled
-   on-demand from entries, not pre-generated and cached
+   on-demand from entries, not pre-generated and cached. Remove BOTH the function definition
+   (line 295) and its two call sites (line 922 in heartbeat handler, line 957 in
+   SessionStart/Stop handler). Also remove the `pulseDebounceTimers` map (line 294).
+   Between Phase 1 and Phase 2, file edits will not trigger pulse entries (only recorded
+   in `file_edits` table) — this is acceptable as a temporary gap.
 
 Hook migration:
 7. Update `/api/hooks` handler to accept both shell-script payload format and native
@@ -893,14 +988,24 @@ Hook migration:
    hooks section, preserving existing shell script hooks for SessionStart/Stop/
    PermissionRequest/PostToolUse. No overlap = no duplicate processing. Keep shell
    scripts for Gemini/Codex.
-10. Update `update.sh` to deploy both: shell scripts (existing events) + native HTTP
+10. Fix `gc-report.sh` line 15: change `SessionEnd) CC_EVENT="Stop"` to
+    `SessionEnd) CC_EVENT="SessionEnd"`. Currently Gemini's SessionEnd (authoritative
+    process-exit) is mapped to Stop (turn-end), so Gemini sessions never trigger
+    `handleSessionEnded()`. This is a pre-existing bug, not introduced by the plan.
+11. Update `update.sh` to deploy both: shell scripts (existing events) + native HTTP
     config (new events only)
 
+Bridging:
+12. Add `pulse_enabled` ↔ `pulse_members` bridging to the PATCH `/api/sessions/:id`
+    handler: when `pulse_enabled` is written, also toggle pulse_members membership
+    (add/remove from project's main pulse). This keeps the existing toggle working
+    while the backend uses pulse_members as the source of truth. Removed in Phase 4.
+
 API & WebSocket:
-11. Implement new API routes (pulse CRUD, entries, membership)
-12. Update existing pulse endpoints (`/api/projects/:name/pulse`, etc.) to delegate to new system
-13. Add WebSocket broadcast for pulse events
-14. Tests for all new endpoints + hook migration tests
+13. Implement new API routes (pulse CRUD, entries, membership)
+14. Update existing pulse endpoints (`/api/projects/:name/pulse`, etc.) to delegate to new system
+15. Add WebSocket broadcast for pulse events
+16. Tests for all new endpoints + hook migration tests
 
 **Checkpoint:** All existing tests pass + new API tests pass. Old pulse endpoints
 still return the same shape (`{markdown, userNotes}`). Native HTTP hooks active for
@@ -986,6 +1091,9 @@ as pulse entries. Subagent sessions display as nested under parent.
 3. Add "Brief" action (UI only — backend in Phase 5)
 4. Add "Sync Pulse" action (UI only — backend in Phase 5)
    (Auto-subscribe to main pulse was done in Phase 2, step 3)
+5. Remove old "Pulse On/Off" toggle from SessionCard. Remove the `pulse_enabled` ↔
+   `pulse_members` bridging code from the PATCH handler (added in Phase 1 step 12).
+   `pulse_members` is now the sole source of truth for pulse subscriptions.
 
 **Checkpoint:** Session cards show pulse memberships. Users can manage subscriptions.
 
@@ -1001,9 +1109,9 @@ as pulse entries. Subagent sessions display as nested under parent.
    polls transcript with `readTranscriptStructured()`, captures response, stores entry
 3. Implement `POST /api/sessions/:id/sync-pulse` — assembles and injects context
 4. Add auto-briefing logic inside `handleSessionEnded()` (Phase 2 step 9). When a session
-   ends and has `tool_count > 3` and is a pulse member: attempt primary path (tmux alive →
-   brief via prompt), fall back to transcript extraction via headless Claude Code. See
-   Mechanism B in "How Agents Contribute" section.
+   ends and has `tool_count > 3` and is a pulse member: use transcript-based extraction
+   via headless Claude Code (the agent is always gone by this point — see Mechanism B in
+   "How Agents Contribute" section).
 5. Add transcript view integration — special "Pulse Update" blocks
 6. Handle edge cases: agent not responsive, agent confused by prompt, timeout
 
@@ -1015,8 +1123,9 @@ shows briefing exchanges. This is the highest-risk phase — test thoroughly.
 **Files:** `server.js` (new dream handler), `pulse.js`, `transcript.js`
 
 Phase 6a — Basic compaction (get the plumbing working):
-1. Implement headless Claude Code spawning via `child_process.execFile('claude', ['-p', ...])`
-   — no tmux, no session card, no hooks. Parse `stream-json` output for the result.
+1. Implement headless Claude Code spawning via `child_process.spawn('claude', ['-p', '-', ...])`
+   with stdin piping (same pattern as Dream Cycle "Mechanism" section). No tmux, no session
+   card, no hooks. Parse `stream-json` output for the result.
 2. Implement `POST /api/pulses/:id/dream` endpoint (basic: old entries → summarize → store)
 3. Add "Dream" button to pulse panel UI
 4. Add automatic triggers (entry count, age threshold, session-count gate)
@@ -1063,7 +1172,9 @@ calling `pulse.getPulseForPrompt()`). This phase upgrades it to use the new syst
 **Files:** `server.js`, `db.js`, `client/src/components/TeamPanel.tsx`, `.claude/agents/`
 
 **Depends on:** Phases 1-5 (hook handlers, pulse entries, briefing system, session card
-integration). Phase 6 (dream cycle) and Phase 7 (enhanced launch) are independent.
+integration) and Phase 7 (enhanced launch — the coordinator prompt uses
+`assembleProjectPulseContext()` which Phase 7 introduces). Phase 6 (dream cycle) is
+independent.
 
 #### Concept
 
@@ -1259,9 +1370,12 @@ const tmuxTarget = ptyManager.createTmuxSession({
 });
 ```
 
-5. **Track** — CC creates a `team_instances` row and stores `teamInstanceId` in the
-   `pendingLabels` map (same pattern as `todoId` for TODO launches — the SessionStart
-   hook handler reads it and links the session to the team). Then monitors via hooks:
+5. **Track** — CC creates a `team_instances` row with `lead_session_id = NULL` (the
+   session doesn't exist yet — it's created when the SessionStart hook fires) and stores
+   `teamInstanceId` in the `pendingLabels` map (same pattern as `todoId` for TODO
+   launches). When the SessionStart hook fires, the handler reads `teamInstanceId` from
+   `pendingLabels` and updates `team_instances SET lead_session_id = @session_id WHERE
+   id = @teamInstanceId`. Then monitors via hooks:
    - `SubagentStart` → register teammate sessions under the team (match via
      `parent_session_id` pointing to the team lead's session)
    - `TaskCreated` / `TaskCompleted` → track task progress
@@ -1290,6 +1404,7 @@ CREATE TABLE IF NOT EXISTS team_instances (
 );
 
 CREATE INDEX IF NOT EXISTS idx_team_instances_project ON team_instances(project);
+CREATE INDEX IF NOT EXISTS idx_team_instances_lead ON team_instances(lead_session_id);
 ```
 
 **FK behavior:** `template_id` intentionally has no `ON DELETE CASCADE` — deleting a
@@ -1297,6 +1412,12 @@ template that has team instances will fail with a constraint error. This is the 
 default: team instances are historical records of past work and shouldn't disappear
 when a template is deleted. The `DELETE /api/team-templates/:id` endpoint should check
 for existing team_instances first and return 409 Conflict with a helpful message.
+`lead_session_id` also has no CASCADE — this means the existing
+`deleteStoppedSessionsOlderThan()` cleanup (db.js line 462) will fail on sessions
+referenced by `team_instances`. Fix: update the cleanup query to skip sessions that
+are referenced as `lead_session_id` in `team_instances`, OR set `lead_session_id = NULL`
+before deleting the session (preferred: `UPDATE team_instances SET lead_session_id = NULL
+WHERE lead_session_id IN (SELECT session_id FROM sessions WHERE ...)` before the DELETE).
 
 #### Team Progress UI
 
@@ -1385,26 +1506,35 @@ based on codebase verification. Not updating these will cause bugs.
   `value + @delta` which breaks for non-additive values.
 - `db.js`: Add `parent_session_id` and `last_idle_signal` to `searchSessions` SELECT list
   (it uses explicit column names, not `s.*`, so new columns won't appear without this)
-- `server.js` `/api/hooks` handler: Add format detection (native HTTP vs shell script)
-  based on presence of `hook_event_name` field. Normalize both to internal format.
-  Native HTTP is only used for new events (SubagentStart, SubagentStop, TaskCreated,
-  TaskCompleted, TeammateIdle, SessionEnd) — no overlap with shell script events.
+- `server.js` `/api/hooks` handler: The existing validation guard (line 795) requires
+  `payload.event && payload.session_id`, which will reject native HTTP hooks (they use
+  `hook_event_name`, not `event`). Update the guard to:
+  `if (!payload || (!payload.event && !payload.hook_event_name) || !payload.session_id)`.
+  Then add format detection based on presence of `hook_event_name` field. Normalize both
+  to internal format. Native HTTP is only used for new events (SubagentStart, SubagentStop,
+  TaskCreated, TaskCompleted, TeammateIdle, SessionEnd) — no overlap with shell script events.
 - `server.js`: Add `SessionEnd` handler that looks up session by `session_id`, verifies
   it has a `tmux_target` (skip headless), marks stopped, and calls `handleSessionEnded()`.
 - `server.js`: PermissionRequest is still shell-script only (no native HTTP overlap), so
   the response format stays `{auto_approve: true}`. No change needed here.
+- `server.js` `/api/hooks` handler: Add new event handlers for `SubagentStart`,
+  `SubagentStop`, `TaskCreated`, `TaskCompleted`, `TeammateIdle`, `SessionEnd` (Phase 1
+  step 8). These use native HTTP payload format (`hook_event_name` instead of `event`).
+  The normalization logic (step 7) must run before these handlers.
+- `hooks/gc-report.sh` (line 15): Fix `SessionEnd` mapping — currently maps to `Stop`
+  (which is a turn-end signal). Change to pass through as `SessionEnd`:
+  `SessionEnd) CC_EVENT="SessionEnd" ;;`
+  Without this fix, Gemini sessions never fire the authoritative session-exit signal.
 - `update.sh`: Add native HTTP hook config deployment to `~/.claude/settings.json`
-  (merge into existing hooks section, don't overwrite non-CC hooks)
+  (merge into existing hooks section, don't overwrite non-CC hooks). Use `jq` for
+  JSON manipulation (available at `/home/zapperz/miniconda3/bin/jq`). Back up
+  existing settings.json before modification.
 
 **Phase 2 (Automatic Entries):**
 - `server.js` SessionStart handler (line 802): After session creation, call
-  `getOrCreateMainPulse(project)` and insert into `pulse_members`. Add `teamInstanceId`
-  check in pendingLabels (same pattern as todoId at line 846).
+  `getOrCreateMainPulse(project)` and insert into `pulse_members`.
 - `server.js` heartbeat handler (line 902): Add file_change debounce map and pulse entry
-  creation. Remove `schedulePulseRegeneration()` call (line 922).
-- `server.js` SessionStart/Stop handler (line 957): Remove `schedulePulseRegeneration()`
-  call. (Both call sites — lines 922 and 957 — must be removed since the function itself
-  is removed in Phase 1 step 6.)
+  creation. (`schedulePulseRegeneration()` call sites already removed in Phase 1 step 6.)
 - `server.js` Stop handler (line 869): Add `currentStatus !== 'stopped'` to the guard.
   Currently only checks `!== 'waiting_permission'`, so a Stop event arriving after Kill
   (from the dying process) reverts the status back to 'active'. The fix:
@@ -1426,10 +1556,21 @@ based on codebase verification. Not updating these will cause bugs.
 - `client/src/hooks/useWebSocket.ts`: Add cases to switch statement (line 121) for new
   WS message types. Currently has no default case — new types are silently ignored.
 
+**Phase 1→4 transition — `pulse_enabled` bridging:** Between Phase 1 (backend uses
+`pulse_members`) and Phase 4 (frontend replaces the toggle), the SessionCard still has
+a "Pulse On/Off" toggle that writes `pulse_enabled` via PATCH. During this window, the
+PATCH handler must ALSO toggle `pulse_members` membership (add/remove from main pulse)
+when `pulse_enabled` is written. This ensures the toggle still works while the backend
+uses the new system. Phase 4 removes the toggle and the bridging code.
+
 **Phase 4 (Session Card Integration):**
-- `client/src/components/SessionCard.tsx`: Add pulse badges. Update React.memo comparison
-  (lines 298-306) to include `pulses` field — currently only checks 8 specific fields,
-  so pulse changes won't trigger re-render without this.
+- `client/src/components/SessionCard.tsx`: Add pulse badges, remove old "Pulse On/Off"
+  toggle. Update React.memo comparison (lines 298-306): replace `pulse_enabled` with a
+  stable pulse comparison. Since `pulses` is an array and `===` always returns false for
+  different references, compare a derived value instead — e.g., `prev.session.pulseVersion
+  === next.session.pulseVersion` (a counter bumped on pulse_member_added/removed WS events)
+  or `JSON.stringify(prev.session.pulses) === JSON.stringify(next.session.pulses)` (simpler
+  but allocates on every comparison — acceptable for small arrays).
 - `client/src/api.ts`: Update `patchSession` type (line 57) if new patchable fields added.
 
 **Phase 5 (Briefing):**
@@ -1438,7 +1579,29 @@ based on codebase verification. Not updating these will cause bugs.
 - `client/src/components/TranscriptView.tsx`: Add special rendering for briefing entries
   (detect via entry content pattern or a new field on TranscriptEntry).
 
+**Phase 6 (Dream Cycle):**
+- `server.js`: Add `POST /api/pulses/:id/dream` handler. Spawns headless Claude Code
+  via `child_process.spawn` (same pattern as auto-briefing). No existing handlers modified.
+- `pulse.js`: Add dream-specific helpers (gather old entries, separate recent vs old,
+  extract file paths from entries for staleness check). These are new functions, not
+  modifications to existing ones.
+- `transcript.js`: No changes — uses existing `readTranscriptStructured()` for transcript
+  mining of unbriefed sessions.
+- `db.js`: Add `statsStmts.set` prepared statement (if not already added in Phase 1 step 4).
+- `client/src/components/PulsePanel.tsx`: Add "Dream" button (deferred from Phase 3).
+
+**Phase 7 (Enhanced Launch):**
+- `server.js` launch handler (line 1059): Replace `pulse.getPulseForPrompt(project)` call
+  with `pulse.assembleProjectPulseContext(project)`. Same location, different function.
+- `server.js` TODO launch handler: Same change as above for `POST /api/todos/:id/launch`.
+- `pulse.js`: Remove `getPulseForPrompt()` backward-compat wrapper (all callers now use
+  the new system). Remove `getUserNotes()` / `setUserNotes()` wrappers if not already
+  removed in Phase 3.
+
 **Phase 8 (Teams):**
+- `server.js` SessionStart handler: Add `teamInstanceId` check in `pendingLabels` map
+  (same pattern as `todoId` at line 846). When present, link the session to the team
+  instance by updating `team_instances.lead_session_id`.
 - `server.js`: Team launch uses its own endpoint (`POST /api/team-templates/:id/launch`)
   but the same underlying mechanism as regular session launch: `ptyManager.createTmuxSession()`
   + `pendingLabels` map. The `pendingLabels` map already supports `todoId` — extend it with
@@ -1466,17 +1629,18 @@ based on codebase verification. Not updating these will cause bugs.
 | Pulse context bloats context budget | Agent performance degrades from too much context | Strict per-pulse character budgets (6000 main + 3000 per topic). Truncate oldest entries first. User can see injection preview. |
 | Compaction loses important info | Agent summaries omit critical details | Keep recent entries uncompacted (2h buffer). User can view compaction history. |
 | Too many pulse entries (noisy) | Main pulse becomes a stream of file changes | Debounce file changes aggressively (30s batches). Separate "activity" from "knowledge" in the UI. |
-| Dream cycle headless Claude Code fails | Dream hangs or produces bad output | 180-second timeout (via `execFile` options). On failure, skip dream (entries just accumulate). Log error. |
+| Dream cycle headless Claude Code fails | Dream hangs or produces bad output | 180-second timeout (via `spawn` + manual kill). On failure, skip dream (entries just accumulate). Log error. |
 | Transcript mining extracts noise | Low-value or misleading content enters pulse | Only mine sessions with tool_count > 3. Dream prompt says "focus on decisions, discoveries, and blockers — skip routine tool use." Agent curates, not raw extraction. |
 | Staleness check false positives | Valid files flagged as missing (e.g., on different branch) | Only flag, don't auto-delete. Dream agent sees the flag and uses judgment. Files on other branches will reappear — conservative approach. |
 | Dream runs too frequently / too rarely | Wasted compute or stale knowledge | Dual gate (entry count/age threshold AND session-count gate). Manual "Dream" button as escape hatch. |
 | Migration breaks existing pulse behavior | Users lose notes or see errors | Backward-compatible API endpoints. Migrate notes as entries. Keep old JSON files as backup. |
-| Auto-briefing on session end races agent exit | Prompt sent but agent already gone | `SessionEnd` hook fires after the agent process exits, so the agent is gone by the time `handleSessionEnded` runs. Primary path is transcript-based extraction via headless Claude Code. Kill endpoint may still catch agent alive briefly — check tmux first. |
+| Auto-briefing on session end races agent exit | Agent always gone | Not a race: `tmux kill-session` is synchronous (`execFileSync`), and `SessionEnd` fires after process exit. The agent is always dead by the time `handleSessionEnded` runs. Auto-briefing uses transcript extraction via headless Claude Code exclusively — no attempt to prompt a live agent. |
 | Session-end detection misses exits | Session stays 'active' despite agent being gone | Three layers: (1) `SessionEnd` hook event (authoritative), (2) Kill endpoint, (3) zombie cleanup as safety net. `Set<session_id>` prevents multiple handleSessionEnded calls. |
 | Stop event reactivates killed session | Killed session shows as 'active' briefly | Stop handler updated to check `currentStatus !== 'stopped'` in addition to `!== 'waiting_permission'`. Prevents Stop events from dying process reverting Kill endpoint's status change. |
 | Dual hook firing creates duplicates | Double file_edit records, double broadcasts | Shell scripts and native HTTP hooks configured for DIFFERENT events (no overlap). Shell scripts handle existing events; native HTTP handles new events only. |
 | Headless Claude Code fires hooks | Dream cycle / fallback briefing creates unwanted sessions | Use `--bare` flag on headless `claude -p` calls. This skips all hooks, MCP servers, and CLAUDE.md — prevents hook events from reaching the CC server. |
 | Headless Claude Code not installed | Compaction/fallback briefing fails | Check for `claude` binary on startup. Log warning if missing. Compaction simply skipped. |
+| CLI flags (`--bare`, `stream-json`) don't exist | Dream cycle / auto-briefing can't run | Verify flags before Phase 6 implementation (see CLI flag verification note in Dream Cycle section). Fall back to `--no-hooks` or `--output-format json` if needed. |
 | Coordinator prompt produces disorganized team | Teammates work on wrong things or duplicate effort | Conservative pre-built templates tested manually before shipping. Coordinator prompt includes explicit task breakdown instructions. Easy to iterate — fix is a prompt edit, not code. |
 | Team spawns too many subagents | Resource exhaustion (CPU, API rate limits) | Coordinator prompt caps teammates at role count. CC enforces max 8 active sessions per team (configurable via `CC_MAX_TEAM_SESSIONS`, default 8). Kill team if cap exceeded. |
 | Team runs indefinitely (no completion) | Wasted API credits, stuck dashboard state | 60-minute timeout on team instances (configurable via `CC_TEAM_TIMEOUT_MINUTES`). On timeout, send "wrap up" prompt to team lead via tmux. 15-minute grace period, then force-stop all team sessions. Timer handles stored in memory map, cleared on normal completion. |
