@@ -45,6 +45,12 @@ export function Header({ onNewSession, onHistoryOpen }: HeaderProps) {
     if (stats.totalSessions > 0) chips.push(`${stats.totalSessions} total`);
     if (stats.sessionsThisWeek > 0) chips.push(`${stats.sessionsThisWeek} this week`);
     if (stats.mostUsedTool) chips.push(`top tool: ${stats.mostUsedTool}`);
+    if (stats.estimatedCostUsd > 0) chips.push(`~$${stats.estimatedCostUsd.toFixed(2)} est. API cost`);
+    if (stats.totalInputTokens > 0 || stats.totalOutputTokens > 0) {
+      const total = stats.totalInputTokens + stats.totalOutputTokens;
+      const fmt = total >= 1_000_000 ? `${(total / 1_000_000).toFixed(1)}M` : total >= 1_000 ? `${Math.round(total / 1_000)}K` : String(total);
+      chips.push(`${fmt} tokens`);
+    }
     return chips;
   }, [stats]);
 

@@ -7,11 +7,13 @@ import './SessionList.css';
 
 interface SessionListProps {
   selectedSessionId: string | null;
+  selectedRightId?: string | null;
   onSelectSession: (id: string) => void;
+  onSelectRight?: (id: string) => void;
   serverInfo: ServerInfo;
 }
 
-export function SessionList({ selectedSessionId, onSelectSession, serverInfo }: SessionListProps) {
+export function SessionList({ selectedSessionId, selectedRightId, onSelectSession, onSelectRight, serverInfo }: SessionListProps) {
   const { sessions, recentEvents, byProject, pendingSessions, stoppedSessions } = useSessions();
 
   // 15s tick for age refresh
@@ -53,8 +55,10 @@ export function SessionList({ selectedSessionId, onSelectSession, serverInfo }: 
                   key={`pending-${s.session_id}`}
                   session={s}
                   isSelected={s.session_id === selectedSessionId}
+                  isSelectedRight={s.session_id === selectedRightId}
                   serverInfo={serverInfo}
                   onSelect={() => onSelectSession(s.session_id)}
+                  onSelectRight={onSelectRight ? () => onSelectRight(s.session_id) : undefined}
                   recentEvents={recentEvents}
                 />
               ))}
@@ -69,7 +73,9 @@ export function SessionList({ selectedSessionId, onSelectSession, serverInfo }: 
               projectName={project}
               sessions={projectSessions}
               selectedSessionId={selectedSessionId}
+              selectedRightId={selectedRightId}
               onSelectSession={onSelectSession}
+              onSelectRight={onSelectRight}
               serverInfo={serverInfo}
               recentEvents={recentEvents}
             />
@@ -93,8 +99,10 @@ export function SessionList({ selectedSessionId, onSelectSession, serverInfo }: 
                   key={s.session_id}
                   session={s}
                   isSelected={s.session_id === selectedSessionId}
+                  isSelectedRight={s.session_id === selectedRightId}
                   serverInfo={serverInfo}
                   onSelect={() => onSelectSession(s.session_id)}
+                  onSelectRight={onSelectRight ? () => onSelectRight(s.session_id) : undefined}
                   recentEvents={recentEvents}
                 />
               ))}

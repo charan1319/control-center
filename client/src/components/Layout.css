@@ -157,6 +157,20 @@
     box-shadow: none;
   }
 
+  /* When split-screen is active, narrow the session list */
+  .layout-left.has-split {
+    width: 280px;
+    min-width: 260px;
+    max-width: 320px;
+  }
+
+  /* Each split panel gets equal share */
+  .layout-right.split {
+    flex: 1;
+    min-width: 0;
+    border-left: 1px solid var(--ctp-surface1);
+  }
+
   .layout-overlay {
     display: none !important;
   }

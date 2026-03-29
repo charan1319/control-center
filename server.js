@@ -12,7 +12,7 @@ import config from './config.js';
 import * as db from './db.js';
 import * as ptyManager from './pty-manager.js';
 import * as snapshots from './snapshots.js';
-import { readTranscriptTail, getLastAssistantText, readTranscriptStructured, getTranscriptSize, isLastTurnComplete, isCodexFormat, parseCodexEntries, readContextUsage, extractContextUsage } from './transcript.js';
+import { readTranscriptTail, getLastAssistantText, readTranscriptStructured, getTranscriptSize, isLastTurnComplete, isCodexFormat, parseCodexEntries, readContextUsage, extractContextUsage, sumTranscriptTokens } from './transcript.js';
 import * as pulse from './pulse.js';
 import * as codexWatcher from './codex-watcher.js';
 
@@ -173,6 +173,32 @@ async function generateSummary(transcript) {
   }
 
   return data.choices?.[0]?.message?.content?.trim() || null;
+}
+
+// ──────────────────────────────────────────────
+// Claude API (Anthropic) — for pulse briefings + task decomposition
+// ──────────────────────────────────────────────
+
+async function callClaude(systemPrompt, userContent, maxTokens = 300) {
+  if (!config.anthropicApiKey) return null;
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': config.anthropicApiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: config.anthropicModel,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userContent }],
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) throw new Error(`Anthropic API error: ${response.status}`);
+  const data = await response.json();
+  return data.content?.[0]?.text?.trim() || null;
 }
 
 // ──────────────────────────────────────────────
@@ -346,30 +372,34 @@ export async function buildServer(opts = {}) {
     const pulseMemberships = db.getAllPulseMemberships();
     socket.send(JSON.stringify({ type: 'init', sessions, recentEvents, pulseMemberships }));
 
-    // Track which transcript this socket is subscribed to (at most one)
-    let subscribedSessionId = null;
+    // Track which transcripts this socket is subscribed to (supports multiple for split-screen)
+    const subscribedSessions = new Set();
 
     socket.on('message', (rawData) => {
       try {
         const msg = JSON.parse(rawData.toString());
 
         if (msg.type === 'subscribe_transcript' && msg.session_id) {
-          // Unsubscribe from previous if any
-          unsubscribeTranscript(socket, subscribedSessionId);
-          subscribedSessionId = msg.session_id;
+          subscribedSessions.add(msg.session_id);
           subscribeTranscript(socket, msg.session_id);
 
         } else if (msg.type === 'unsubscribe_transcript') {
-          unsubscribeTranscript(socket, subscribedSessionId);
-          subscribedSessionId = null;
+          if (msg.session_id) {
+            unsubscribeTranscript(socket, msg.session_id);
+            subscribedSessions.delete(msg.session_id);
+          } else {
+            // Backward compat: unsubscribe all
+            for (const sid of subscribedSessions) unsubscribeTranscript(socket, sid);
+            subscribedSessions.clear();
+          }
         }
       } catch { /* malformed message */ }
     });
 
     const cleanup = () => {
       dashboardClients.delete(socket);
-      unsubscribeTranscript(socket, subscribedSessionId);
-      subscribedSessionId = null;
+      for (const sid of subscribedSessions) unsubscribeTranscript(socket, sid);
+      subscribedSessions.clear();
     };
     socket.on('close', cleanup);
     socket.on('error', cleanup);
@@ -442,22 +472,57 @@ export async function buildServer(opts = {}) {
         // Auto-briefing: extract transcript summary as pulse entry
         const session = db.getSession(sessionId);
         if (session?.project && session?.transcript) {
-          try {
-            const text = getLastAssistantText(session.transcript);
-            if (text && text.length > 20) {
-              const mainPulse = pulse.getOrCreateMainPulse(session.project);
-              if (mainPulse) {
-                const label = session.label || sessionId.slice(0, 12);
-                const summary = text.slice(0, 500);
-                db.insertPulseEntry({
-                  pulse_id: mainPulse.id,
-                  session_id: sessionId,
-                  entry_type: 'briefing',
-                  content: `Session ended — ${label}: ${summary}`,
-                });
-                broadcastPulseEntry(mainPulse.id, { session_id: sessionId, entry_type: 'briefing', content: `Session ended — ${label}: ${summary}` });
+          (async () => {
+            try {
+              const label = session.label || sessionId.slice(0, 12);
+              let summary = null;
+
+              // Try Claude-powered summary first
+              if (config.anthropicApiKey) {
+                const turns = readTranscriptTail(session.transcript, 48_000);
+                if (turns.length > 0) {
+                  const lines = [];
+                  for (const turn of turns.slice(-20)) {
+                    const role = turn.type === 'user' ? 'User' : 'Assistant';
+                    const c = turn.message?.content;
+                    let text = '';
+                    if (typeof c === 'string') text = c;
+                    else if (Array.isArray(c)) text = c.map(b => b.type === 'text' ? b.text : b.type === 'tool_use' ? `[${b.name}: ${(b.input?.file_path || b.input?.command || '').slice(0, 100)}]` : '').filter(Boolean).join(' ');
+                    if (text.trim()) lines.push(`${role}: ${text.slice(0, 600)}`);
+                  }
+                  if (lines.length > 0) {
+                    summary = await callClaude(
+                      'Summarize what this AI coding session accomplished in 2-3 sentences. Include: what was built or fixed, key files changed, and any unfinished work remaining. Be specific and concrete. No headers or bullet points.',
+                      lines.join('\n'),
+                      200,
+                    );
+                  }
+                }
               }
-            }
+
+              // Fallback: raw last assistant text
+              if (!summary) {
+                const text = getLastAssistantText(session.transcript);
+                if (text && text.length > 20) summary = text.slice(0, 500);
+              }
+
+              if (summary) {
+                const mainPulse = pulse.getOrCreateMainPulse(session.project);
+                if (mainPulse) {
+                  const content = `Session ended — ${label}: ${summary}`;
+                  db.insertPulseEntry({ pulse_id: mainPulse.id, session_id: sessionId, entry_type: 'briefing', content });
+                  broadcastPulseEntry(mainPulse.id, { session_id: sessionId, entry_type: 'briefing', content });
+                }
+              }
+            } catch { /* transcript read or API call failed */ }
+          })();
+        }
+
+        // Capture token usage from transcript
+        if (session?.transcript) {
+          try {
+            const tokenData = sumTranscriptTokens(session.transcript);
+            if (tokenData) db.updateSessionTokens(sessionId, tokenData.inputTokens, tokenData.outputTokens);
           } catch { /* transcript read failed */ }
         }
 
@@ -2243,6 +2308,43 @@ Be concise — 200 words max. This will be read by other agents.`;
     if (!existing) return reply.status(404).send({ error: 'Todo not found' });
     db.deleteTodo(id);
     return { ok: true };
+  });
+
+  fastify.post('/api/todos/decompose', async (request, reply) => {
+    const { project, goal } = request.body || {};
+    if (!project || !goal) return reply.status(400).send({ error: 'project and goal required' });
+    if (!config.anthropicApiKey) return reply.status(503).send({ error: 'Anthropic API key not configured' });
+
+    const pulseContext = pulse.assembleProjectPulseContext(project);
+
+    const systemPrompt = 'You are a software project planner. Break down the user\'s goal into 3-8 concrete, independently-executable coding tasks. Return ONLY a JSON array with no other text. Each element must have: "title" (short, under 80 chars), "details" (1-3 sentences of implementation guidance), and "priority" (integer, 0 = first task). Tasks should be scoped so one AI coding agent session can complete each. Be specific about files and functions when possible.';
+
+    const userContent = pulseContext
+      ? `Project context:\n${pulseContext}\n\nGoal: ${goal}`
+      : `Goal: ${goal}`;
+
+    try {
+      const result = await callClaude(systemPrompt, userContent, 1500);
+      if (!result) return reply.status(500).send({ error: 'No response from Claude' });
+
+      // Extract JSON array from response (Claude might wrap it in markdown code blocks)
+      const jsonStr = result.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+      const tasks = JSON.parse(jsonStr);
+
+      if (!Array.isArray(tasks)) return reply.status(500).send({ error: 'Invalid response format' });
+
+      // Validate and sanitize each task
+      const validated = tasks.map((t, i) => ({
+        title: String(t.title || '').slice(0, 200),
+        details: String(t.details || ''),
+        priority: typeof t.priority === 'number' ? t.priority : i,
+      })).filter(t => t.title);
+
+      return { tasks: validated };
+    } catch (err) {
+      fastify.log.warn({ err }, 'Task decomposition failed');
+      return reply.status(500).send({ error: err.message });
+    }
   });
 
   fastify.post('/api/todos/:id/launch', async (request, reply) => {

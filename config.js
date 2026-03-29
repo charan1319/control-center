@@ -26,6 +26,10 @@ const config = {
   deepseekModel: 'deepseek-chat',
   aiSummaryEnabled: process.env.CC_AI_SUMMARY !== 'false',
 
+  // Anthropic Claude API — used for pulse briefings and task decomposition
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
+  anthropicModel: process.env.CC_ANTHROPIC_MODEL || 'claude-sonnet-4-6',
+
   // Auto-approve permissions: tool names that get silently approved
   autoApproveTools: (process.env.CC_AUTO_APPROVE_TOOLS || 'Read,Glob,Grep,WebFetch,WebSearch,LS').split(',').map(t => t.trim()).filter(Boolean),
 

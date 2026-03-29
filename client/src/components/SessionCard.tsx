@@ -16,12 +16,14 @@ import './SessionCard.css';
 interface SessionCardProps {
   session: Session;
   isSelected: boolean;
+  isSelectedRight?: boolean;
   serverInfo: ServerInfo;
   onSelect: () => void;
+  onSelectRight?: () => void;
   recentEvents: SessionEvent[];
 }
 
-function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEvents }: SessionCardProps) {
+function SessionCardInner({ session, isSelected, isSelectedRight, serverInfo, onSelect, onSelectRight, recentEvents }: SessionCardProps) {
   const { showToast } = useToast();
   const { pulseMemberships } = useWebSocket();
   const [editOpen, setEditOpen] = useState(false);
@@ -171,8 +173,15 @@ function SessionCardInner({ session, isSelected, serverInfo, onSelect, recentEve
 
   return (
     <div
-      className={`session-card status-${statusClass}${isSelected ? ' selected' : ''}${dragOver ? ' drop-target' : ''}`}
-      onClick={onSelect}
+      className={`session-card status-${statusClass}${isSelected ? ' selected' : ''}${isSelectedRight ? ' selected-right' : ''}${dragOver ? ' drop-target' : ''}`}
+      onClick={(e) => {
+        if (e.shiftKey && onSelectRight) {
+          e.preventDefault();
+          onSelectRight();
+        } else {
+          onSelect();
+        }
+      }}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -335,6 +344,7 @@ export const SessionCard = React.memo(SessionCardInner, (prev, next) => {
     prev.session.status === next.session.status &&
     prev.session.pending_tool === next.session.pending_tool &&
     prev.session.auto_approve === next.session.auto_approve &&
-    prev.isSelected === next.isSelected
+    prev.isSelected === next.isSelected &&
+    prev.isSelectedRight === next.isSelectedRight
   );
 });

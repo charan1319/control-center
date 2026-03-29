@@ -184,6 +184,8 @@ export const api = {
     del<{ ok: boolean }>(`/api/todos/${id}`),
   launchTodo: (id: number) =>
     post<{ success: boolean; tmux_target: string; todo_id: number }>(`/api/todos/${id}/launch`, {}),
+  decomposeTasks: (project: string, goal: string) =>
+    post<{ tasks: Array<{ title: string; details: string; priority: number }> }>('/api/todos/decompose', { project, goal }),
 
   // Push notifications
   getVapidKey: () => fetchJson<{ publicKey: string; enabled: boolean }>('/api/push/vapid-public-key'),

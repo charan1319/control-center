@@ -57,7 +57,7 @@ export function useTranscript(sessionId: string | null) {
     sendMessage({ type: 'subscribe_transcript', session_id: sessionId });
 
     return () => {
-      sendMessage({ type: 'unsubscribe_transcript' });
+      sendMessage({ type: 'unsubscribe_transcript', session_id: sessionId });
     };
   }, [sessionId, connectionStatus, sendMessage]);
 

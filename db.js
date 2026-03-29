@@ -35,6 +35,8 @@ try { db.exec("ALTER TABLE sessions ADD COLUMN pulse_enabled INTEGER DEFAULT 1")
 try { db.exec("ALTER TABLE sessions ADD COLUMN cli_type TEXT DEFAULT 'claude'"); } catch { /* already exists */ }
 try { db.exec("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT DEFAULT NULL"); } catch { /* already exists */ }
 try { db.exec("ALTER TABLE sessions ADD COLUMN last_idle_signal TEXT DEFAULT NULL"); } catch { /* already exists */ }
+try { db.exec("ALTER TABLE sessions ADD COLUMN total_input_tokens INTEGER DEFAULT 0"); } catch { /* already exists */ }
+try { db.exec("ALTER TABLE sessions ADD COLUMN total_output_tokens INTEGER DEFAULT 0"); } catch { /* already exists */ }
 
 db.exec(`
 
@@ -222,6 +224,10 @@ const stmts = {
       pulse_enabled = COALESCE(@pulse_enabled, pulse_enabled),
       updated_at = datetime('now')
     WHERE session_id = @session_id
+  `),
+
+  updateSessionTokens: db.prepare(`
+    UPDATE sessions SET total_input_tokens = @input, total_output_tokens = @output WHERE session_id = @session_id
   `),
 
   getSession: db.prepare(`
@@ -496,6 +502,10 @@ export function updateStatus(session_id, status) {
   return stmts.updateStatus.run({ session_id, status });
 }
 
+export function updateSessionTokens(session_id, inputTokens, outputTokens) {
+  return stmts.updateSessionTokens.run({ session_id, input: inputTokens, output: outputTokens });
+}
+
 export function updateSession(session_id, { label, tmux_target, project, auto_approve, pulse_enabled }) {
   return stmts.updateSession.run({
     session_id,
@@ -674,6 +684,13 @@ export function getStats() {
   const completionTokens = allStats['ai_completion_tokens'] ?? 0;
   const costUsd = (promptTokens * DEEPSEEK_COST_INPUT_PER_M + completionTokens * DEEPSEEK_COST_OUTPUT_PER_M) / 1_000_000;
   const avgRow = statsStmts.avgDuration.get();
+  // Aggregate session token usage and estimate API cost
+  const tokenTotals = db.prepare('SELECT COALESCE(SUM(total_input_tokens),0) as totalInput, COALESCE(SUM(total_output_tokens),0) as totalOutput FROM sessions WHERE total_input_tokens > 0').get();
+  // Default to Sonnet pricing as most common model
+  const estInput = (tokenTotals.totalInput / 1_000_000) * 3.00;
+  const estOutput = (tokenTotals.totalOutput / 1_000_000) * 15.00;
+  const estimatedCostUsd = Math.round((estInput + estOutput) * 100) / 100;
+
   return {
     totalSessions: statsStmts.totalSessions.get().n,
     sessionsThisWeek: statsStmts.sessionsThisWeek.get().n,
@@ -682,6 +699,9 @@ export function getStats() {
     avgDurationMinutes: avgRow?.avg_min ? Math.round(avgRow.avg_min) : null,
     aiSummaryCalls: Math.round(allStats['ai_summary_calls'] ?? 0),
     aiCostUsd: costUsd,
+    totalInputTokens: tokenTotals.totalInput,
+    totalOutputTokens: tokenTotals.totalOutput,
+    estimatedCostUsd,
   };
 }
 

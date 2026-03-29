@@ -12,14 +12,17 @@ import type { ServerInfo } from '../types';
 import './Layout.css';
 
 interface LayoutProps {
-  selectedSessionId: string | null;
+  selectedLeft: string | null;
+  selectedRight: string | null;
   onSelectSession: (id: string) => void;
-  onCloseDetail: () => void;
+  onSelectRight: (id: string) => void;
+  onCloseLeft: () => void;
+  onCloseRight: () => void;
 }
 
 const fetchInfo = () => api.getInfo();
 
-export function Layout({ selectedSessionId, onSelectSession, onCloseDetail }: LayoutProps) {
+export function Layout({ selectedLeft, selectedRight, onSelectSession, onSelectRight, onCloseLeft, onCloseRight }: LayoutProps) {
   const { sessions, recentEvents } = useWebSocket();
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -31,18 +34,28 @@ export function Layout({ selectedSessionId, onSelectSession, onCloseDetail }: La
     [serverInfo]
   );
 
-  // Find the selected session object
-  const selectedSession = useMemo(
-    () => selectedSessionId ? sessions.find(s => s.session_id === selectedSessionId) ?? null : null,
-    [sessions, selectedSessionId]
+  const selectedSessionLeft = useMemo(
+    () => selectedLeft ? sessions.find(s => s.session_id === selectedLeft) ?? null : null,
+    [sessions, selectedLeft]
   );
 
-  // Escape closes detail panel or history (but not if a modal is open)
+  const selectedSessionRight = useMemo(
+    () => selectedRight ? sessions.find(s => s.session_id === selectedRight) ?? null : null,
+    [sessions, selectedRight]
+  );
+
+  const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1200;
+  const hasAnySelection = !!(selectedLeft || selectedRight);
+  const hasSplit = !!(selectedSessionLeft && selectedSessionRight && isDesktop);
+
+  // Escape closes right panel first, then left
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape' && !newSessionOpen) {
-        if (selectedSessionId) {
-          onCloseDetail();
+        if (selectedRight) {
+          onCloseRight();
+        } else if (selectedLeft) {
+          onCloseLeft();
         } else if (historyOpen) {
           setHistoryOpen(false);
         }
@@ -50,7 +63,7 @@ export function Layout({ selectedSessionId, onSelectSession, onCloseDetail }: La
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedSessionId, onCloseDetail, newSessionOpen, historyOpen]);
+  }, [selectedLeft, selectedRight, onCloseLeft, onCloseRight, newSessionOpen, historyOpen]);
 
   const handleNewSession = useCallback(() => {
     setNewSessionOpen(true);
@@ -70,7 +83,7 @@ export function Layout({ selectedSessionId, onSelectSession, onCloseDetail }: La
       <Header onNewSession={handleNewSession} onHistoryOpen={handleHistoryOpen} />
 
       <div className="layout-main">
-        <div className={`layout-left${selectedSessionId ? ' has-selection' : ''}`}>
+        <div className={`layout-left${hasAnySelection ? ' has-selection' : ''}${hasSplit ? ' has-split' : ''}`}>
           {historyOpen ? (
             <HistoryView
               onClose={() => setHistoryOpen(false)}
@@ -79,8 +92,10 @@ export function Layout({ selectedSessionId, onSelectSession, onCloseDetail }: La
           ) : (
             <>
               <SessionList
-                selectedSessionId={selectedSessionId}
+                selectedSessionId={selectedLeft}
+                selectedRightId={selectedRight}
                 onSelectSession={onSelectSession}
+                onSelectRight={onSelectRight}
                 serverInfo={resolvedServerInfo}
               />
               <EventLog
@@ -91,22 +106,34 @@ export function Layout({ selectedSessionId, onSelectSession, onCloseDetail }: La
           )}
         </div>
 
-        {selectedSessionId && selectedSession && (
-          <div className="layout-right">
+        {selectedSessionLeft && (
+          <div className={`layout-right${hasSplit ? ' split' : ''}`}>
             <div className="detail-panel">
               <SessionDetail
-                key={selectedSession.session_id}
-                session={selectedSession}
-                onClose={onCloseDetail}
+                key={selectedSessionLeft.session_id}
+                session={selectedSessionLeft}
+                onClose={onCloseLeft}
+              />
+            </div>
+          </div>
+        )}
+
+        {isDesktop && selectedSessionRight && (
+          <div className="layout-right split">
+            <div className="detail-panel">
+              <SessionDetail
+                key={selectedSessionRight.session_id}
+                session={selectedSessionRight}
+                onClose={onCloseRight}
               />
             </div>
           </div>
         )}
       </div>
 
-      {/* Mobile overlay backdrop */}
-      {selectedSessionId && (
-        <div className="layout-overlay" onClick={onCloseDetail} />
+      {/* Mobile overlay backdrop — only for single panel */}
+      {hasAnySelection && !isDesktop && (
+        <div className="layout-overlay" onClick={selectedRight ? onCloseRight : onCloseLeft} />
       )}
 
       <NewSessionModal

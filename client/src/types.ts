@@ -123,6 +123,9 @@ export interface Stats {
   avgDurationMinutes: number;
   aiSummaryCalls: number;
   aiCostUsd: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  estimatedCostUsd: number;
 }
 
 // ─── Pulse types ───

@@ -52,6 +52,15 @@
   box-shadow: inset 3px 0 0 var(--color-accent), 0 0 0 1px var(--color-accent);
 }
 
+.session-card.selected-right {
+  border-color: var(--ctp-peach);
+  box-shadow: inset -3px 0 0 var(--ctp-peach), 0 0 0 1px var(--ctp-peach);
+}
+
+.session-card.selected.selected-right {
+  box-shadow: inset 3px 0 0 var(--color-accent), inset -3px 0 0 var(--ctp-peach), 0 0 0 1px var(--color-accent);
+}
+
 .session-card.drop-target {
   border-color: var(--color-accent);
   box-shadow: 0 0 0 2px var(--color-accent);

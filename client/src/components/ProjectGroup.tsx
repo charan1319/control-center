@@ -11,7 +11,9 @@ interface ProjectGroupProps {
   projectName: string;
   sessions: Session[];
   selectedSessionId: string | null;
+  selectedRightId?: string | null;
   onSelectSession: (id: string) => void;
+  onSelectRight?: (id: string) => void;
   serverInfo: ServerInfo;
   recentEvents: SessionEvent[];
 }
@@ -20,7 +22,9 @@ export function ProjectGroup({
   projectName,
   sessions,
   selectedSessionId,
+  selectedRightId,
   onSelectSession,
+  onSelectRight,
   serverInfo,
   recentEvents,
 }: ProjectGroupProps) {
@@ -57,8 +61,10 @@ export function ProjectGroup({
             key={s.session_id}
             session={s}
             isSelected={s.session_id === selectedSessionId}
+            isSelectedRight={s.session_id === selectedRightId}
             serverInfo={serverInfo}
             onSelect={() => onSelectSession(s.session_id)}
+            onSelectRight={onSelectRight ? () => onSelectRight(s.session_id) : undefined}
             recentEvents={recentEvents}
           />
         ))}

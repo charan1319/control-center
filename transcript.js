@@ -390,6 +390,63 @@ export function readTranscriptStructured(filePath, maxBytes = 65536) {
 }
 
 /**
+ * Sum all token usage across a full transcript JSONL file.
+ * Reads in 512KB chunks to handle large files.
+ * Returns { inputTokens, outputTokens } or null if no usage data found.
+ */
+export function sumTranscriptTokens(filePath) {
+  if (!filePath || !existsSync(filePath)) return null;
+  try {
+    const fd = openSync(filePath, 'r');
+    try {
+      const { size } = fstatSync(fd);
+      if (size === 0) return null;
+      const CHUNK = 512 * 1024;
+      let totalInput = 0;
+      let totalOutput = 0;
+      let leftover = '';
+
+      for (let offset = 0; offset < size; offset += CHUNK) {
+        const readSize = Math.min(CHUNK, size - offset);
+        const buf = Buffer.allocUnsafe(readSize);
+        readSync(fd, buf, 0, readSize, offset);
+        const chunk = leftover + buf.toString('utf8');
+        const lines = chunk.split('\n');
+        leftover = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const obj = JSON.parse(trimmed);
+            if (obj.type === 'assistant' && obj.message?.usage) {
+              const u = obj.message.usage;
+              totalInput += (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+              totalOutput += u.output_tokens || 0;
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+      if (leftover.trim()) {
+        try {
+          const obj = JSON.parse(leftover.trim());
+          if (obj.type === 'assistant' && obj.message?.usage) {
+            const u = obj.message.usage;
+            totalInput += (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+            totalOutput += u.output_tokens || 0;
+          }
+        } catch { /* skip */ }
+      }
+
+      if (totalInput === 0 && totalOutput === 0) return null;
+      return { inputTokens: totalInput, outputTokens: totalOutput };
+    } finally {
+      closeSync(fd);
+    }
+  } catch { return null; }
+}
+
+/**
  * Return the byte size of a transcript file, or 0 if it doesn't exist.
  */
 export function getTranscriptSize(filePath) {
