@@ -176,12 +176,40 @@ async function generateSummary(transcript) {
 }
 
 // ──────────────────────────────────────────────
-// Claude API (Anthropic) — for pulse briefings + task decomposition
+// Claude AI — for pulse briefings + task decomposition
+// Uses `claude -p` CLI (Max plan, no API key needed).
+// Falls back to Anthropic API if CLI unavailable and key is set.
 // ──────────────────────────────────────────────
 
-async function callClaude(systemPrompt, userContent, maxTokens = 300) {
-  if (!config.anthropicApiKey) return null;
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+function callClaudeCli(prompt) {
+  return new Promise((resolve) => {
+    const child = spawn('claude', ['-p', '--output-format', 'json', '--model', 'haiku', '--no-session-persistence'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 60_000,
+    });
+
+    let stdout = '';
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.on('error', () => resolve(null));
+    child.on('close', (code) => {
+      if (code !== 0) { resolve(null); return; }
+      try {
+        const data = JSON.parse(stdout);
+        if (data.is_error) { resolve(null); return; }
+        resolve(data.result?.trim() || null);
+      } catch {
+        resolve(stdout.trim() || null);
+      }
+    });
+
+    child.stdin.write(prompt);
+    child.stdin.end();
+  });
+}
+
+function callClaudeApi(systemPrompt, userContent, maxTokens = 300) {
+  if (!config.anthropicApiKey) return Promise.resolve(null);
+  return fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -195,10 +223,20 @@ async function callClaude(systemPrompt, userContent, maxTokens = 300) {
       messages: [{ role: 'user', content: userContent }],
     }),
     signal: AbortSignal.timeout(15000),
-  });
-  if (!response.ok) throw new Error(`Anthropic API error: ${response.status}`);
-  const data = await response.json();
-  return data.content?.[0]?.text?.trim() || null;
+  }).then(r => {
+    if (!r.ok) throw new Error(`Anthropic API error: ${r.status}`);
+    return r.json();
+  }).then(data => data.content?.[0]?.text?.trim() || null)
+    .catch(() => null);
+}
+
+async function callClaude(systemPrompt, userContent, _maxTokens = 300) {
+  // Try CLI first (uses Max plan — no API key needed)
+  const cliResult = await callClaudeCli(`${systemPrompt}\n\n${userContent}`);
+  if (cliResult) return cliResult;
+
+  // Fall back to API if key is configured
+  return callClaudeApi(systemPrompt, userContent, _maxTokens);
 }
 
 // ──────────────────────────────────────────────
