@@ -1471,12 +1471,20 @@ export async function buildServer(opts = {}) {
       if (!/^[a-zA-Z0-9_-]+$/.test(target)) {
         return reply.status(400).send({ error: 'Invalid tmux target' });
       }
-      // Use a unique named buffer to avoid race conditions between concurrent requests.
-      // execFileSync bypasses the shell entirely — no injection possible.
-      const buf = `cc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: text, timeout: 10_000 });
-      execFileSync('tmux', ['paste-buffer', '-t', target, '-b', buf, '-d'], { timeout: 10_000 });
-      execFileSync('tmux', ['send-keys', '-t', target, 'Enter'], { timeout: 10_000 });
+
+      if (session.cli_type === 'codex') {
+        // Codex's Rust TUI doesn't process bracketed paste sequences from paste-buffer.
+        // Use send-keys -l (literal keystrokes) instead.
+        execFileSync('tmux', ['send-keys', '-t', target, '-l', text], { timeout: 10_000 });
+        execFileSync('tmux', ['send-keys', '-t', target, 'Enter'], { timeout: 10_000 });
+      } else {
+        // Claude/Gemini: use load-buffer + paste-buffer (handles large text, preserves newlines).
+        // Unique named buffer avoids race conditions between concurrent requests.
+        const buf = `cc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        execFileSync('tmux', ['load-buffer', '-b', buf, '-'], { input: text, timeout: 10_000 });
+        execFileSync('tmux', ['paste-buffer', '-t', target, '-b', buf, '-d'], { timeout: 10_000 });
+        execFileSync('tmux', ['send-keys', '-t', target, 'Enter'], { timeout: 10_000 });
+      }
       return { success: true };
     } catch (err) {
       return reply.status(500).send({ error: err.message });
@@ -1630,25 +1638,39 @@ export async function buildServer(opts = {}) {
 
     const limit = clampInt(request.query.limit, 100, 1, 1000);
     const before = request.query.before || null;
-
-    // Scale read size based on requested limit
-    const baseBytes = limit * 1024;
-    const maxBytes = before ? baseBytes * 4 : baseBytes;
-
-    const allEntries = readTranscriptStructured(session.transcript, maxBytes);
     const fileSize = getTranscriptSize(session.transcript);
-    const readFull = maxBytes >= fileSize;
+    const baseBytes = limit * 1024;
 
     let entries;
+    let hasMore;
+
     if (before) {
+      // Progressive read: double the byte window until we find enough older entries
+      // or read the entire file. Fixes pagination for long transcripts where a fixed
+      // tail window can't reach far enough back.
+      let readBytes = baseBytes * 2;
+      let allEntries;
+      let readFull = false;
+
+      do {
+        allEntries = readTranscriptStructured(session.transcript, readBytes);
+        readFull = readBytes >= fileSize;
+        if (readFull) break;
+        const olderCount = allEntries.filter(e => e.timestamp && e.timestamp < before).length;
+        if (olderCount >= limit) break;
+        readBytes = Math.min(readBytes * 2, fileSize);
+      } while (true);
+
       const filtered = allEntries.filter(e => e.timestamp && e.timestamp < before);
       entries = filtered.slice(-limit);
+      hasMore = !readFull || filtered.length > limit;
     } else {
+      // Initial load: read from the tail
+      const allEntries = readTranscriptStructured(session.transcript, baseBytes);
+      const readFull = baseBytes >= fileSize;
       entries = allEntries.slice(-limit);
+      hasMore = !readFull || allEntries.length > limit;
     }
-
-    // hasMore: true if we didn't read the entire file (there may be older entries)
-    const hasMore = !readFull || (before ? allEntries.some(e => e.timestamp && e.timestamp < before && !entries.includes(e)) : allEntries.length > limit);
 
     // Lightweight tail check: is the model's last turn complete?
     // Independent of the entries read window, so it works even when

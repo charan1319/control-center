@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import { useRef, useEffect, useLayoutEffect, useState, useCallback, useMemo } from 'react';
 import { useTranscript } from '../hooks/useTranscript';
 import { api } from '../api';
 import { formatToolDetail, getStatusClass } from '../utils';
@@ -345,10 +345,12 @@ interface TranscriptViewProps {
 }
 
 export function TranscriptView({ sessionId, session, queuedMessages }: TranscriptViewProps) {
-  const { entries, loading, error, loadOlder, hasMore, turnComplete } = useTranscript(sessionId);
+  const { entries, loading, error, loadOlder, hasMore, turnComplete, prependVersion } = useTranscript(sessionId);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadingOlderRef = useRef(false); // synchronous guard — prevents concurrent loads
+  const prevScrollHeightRef = useRef(0); // scrollHeight captured before loadOlder
   const prevEntriesLenRef = useRef(0);
   // Track entries count when each queued message was first seen (set via effect, read in useMemo)
   const queuedBaselinesRef = useRef<Map<number, number>>(new Map());
@@ -403,30 +405,43 @@ export function TranscriptView({ sessionId, session, queuedMessages }: Transcrip
     const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 50;
     setIsScrolledUp(!atBottom);
 
-    // Scroll-up pagination
-    if (el.scrollTop < 50 && hasMore && !loadingOlder) {
+    // Scroll-up pagination — use ref for synchronous guard to prevent concurrent loads
+    if (el.scrollTop < 50 && hasMore && !loadingOlderRef.current) {
+      loadingOlderRef.current = true;
       setLoadingOlder(true);
-      const prevHeight = el.scrollHeight;
-      loadOlder().then(() => {
-        // Restore scroll position after prepending
-        requestAnimationFrame(() => {
-          if (containerRef.current) {
-            containerRef.current.scrollTop = containerRef.current.scrollHeight - prevHeight;
-          }
-          setLoadingOlder(false);
-        });
-      }).catch(() => {
+      prevScrollHeightRef.current = el.scrollHeight;
+      loadOlder().catch(() => {
+        // On error, clear guards so user can retry
+        prevScrollHeightRef.current = 0;
+        loadingOlderRef.current = false;
         setLoadingOlder(false);
       });
     }
-  }, [hasMore, loadOlder, loadingOlder]);
+  }, [hasMore, loadOlder]);
 
-  // Auto-scroll to bottom when new entries arrive (if not scrolled up)
+  // Restore scroll position after entries are prepended.
+  // useLayoutEffect fires synchronously after React commits DOM mutations,
+  // guaranteeing scrollHeight reflects the new content (unlike requestAnimationFrame
+  // which can fire before React commits, causing scroll jumps).
+  // Only triggered by prependVersion — not by WS appends.
+  useLayoutEffect(() => {
+    if (!prevScrollHeightRef.current) return;
+    const el = containerRef.current;
+    if (!el) return;
+
+    el.scrollTop = el.scrollHeight - prevScrollHeightRef.current;
+    prevScrollHeightRef.current = 0;
+    loadingOlderRef.current = false;
+    setLoadingOlder(false);
+  }, [prependVersion]);
+
+  // Auto-scroll to bottom when new entries arrive (if not scrolled up).
+  // Skip during loadOlder to prevent interference with scroll restoration.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
-    if (entries.length > prevEntriesLenRef.current && !isScrolledUp) {
+    if (entries.length > prevEntriesLenRef.current && !isScrolledUp && !loadingOlderRef.current) {
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
     }
     prevEntriesLenRef.current = entries.length;

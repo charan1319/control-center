@@ -10,7 +10,12 @@ export function useTranscript(sessionId: string | null) {
   const [hasMore, setHasMore] = useState(false);
   const [turnComplete, setTurnComplete] = useState(true);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  const [prependVersion, setPrependVersion] = useState(0);
   const { sendMessage, connectionStatus, transcriptVersion, getTranscriptUpdates, getLatestContextUsage, getServerTurnComplete, refreshSession } = useWebSocket();
+
+  // Ref for entries so loadOlder doesn't depend on the full entries array
+  const entriesRef = useRef<TranscriptEntry[]>(entries);
+  entriesRef.current = entries;
 
   // Fetch transcript via HTTP — independent of WebSocket status
   useEffect(() => {
@@ -96,19 +101,24 @@ export function useTranscript(sessionId: string | null) {
     return () => clearInterval(interval);
   }, [sessionId, turnComplete, loading, refreshSession]);
 
-  const loadOlder = useCallback(async () => {
-    if (!sessionId || !entries.length) return;
-    const oldest = entries[0];
+  // Returns the number of entries prepended (0 if none)
+  const loadOlder = useCallback(async (): Promise<number> => {
+    const currentEntries = entriesRef.current;
+    if (!sessionId || !currentEntries.length) return 0;
+    const oldest = currentEntries[0];
     try {
       const older = await api.getTranscript(sessionId, 100, oldest.timestamp);
       if (older.entries.length) {
         setEntries(prev => [...older.entries, ...prev]);
+        setPrependVersion(v => v + 1);
       }
       setHasMore(older.hasMore);
+      return older.entries.length;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return 0;
     }
-  }, [sessionId, entries]);
+  }, [sessionId]);
 
-  return { entries, loading, error, loadOlder, hasMore, turnComplete, contextUsage };
+  return { entries, loading, error, loadOlder, hasMore, turnComplete, contextUsage, prependVersion };
 }
