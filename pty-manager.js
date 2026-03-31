@@ -177,6 +177,18 @@ export function resize(tmuxTarget, cols, rows) {
 }
 
 /**
+ * Write raw input to a tmux session's PTY (same path as the terminal WebSocket).
+ * Used for CLIs like Codex whose TUI doesn't respond to tmux send-keys.
+ * Returns true if written, false if no PTY bridge exists.
+ */
+export function writeInput(tmuxTarget, data) {
+  const entry = ensureBridge(tmuxTarget);
+  if (!entry) return false;
+  entry.ptyProcess.write(data);
+  return true;
+}
+
+/**
  * Get the raw PTY scrollback buffer for a tmux target.
  * Returns the actual terminal output stream (with ANSI codes), or null if no PTY bridge exists.
  */

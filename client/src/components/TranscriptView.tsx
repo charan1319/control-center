@@ -342,9 +342,10 @@ interface TranscriptViewProps {
   sessionId: string;
   session?: Session;
   queuedMessages?: QueuedMessage[];
+  hidden?: boolean;
 }
 
-export function TranscriptView({ sessionId, session, queuedMessages }: TranscriptViewProps) {
+export function TranscriptView({ sessionId, session, queuedMessages, hidden }: TranscriptViewProps) {
   const { entries, loading, error, loadOlder, hasMore, turnComplete, prependVersion } = useTranscript(sessionId);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
@@ -352,6 +353,7 @@ export function TranscriptView({ sessionId, session, queuedMessages }: Transcrip
   const loadingOlderRef = useRef(false); // synchronous guard — prevents concurrent loads
   const prevScrollHeightRef = useRef(0); // scrollHeight captured before loadOlder
   const prevEntriesLenRef = useRef(0);
+  const prevHiddenRef = useRef(hidden);
   // Track entries count when each queued message was first seen (set via effect, read in useMemo)
   const queuedBaselinesRef = useRef<Map<number, number>>(new Map());
 
@@ -457,6 +459,17 @@ export function TranscriptView({ sessionId, session, queuedMessages }: Transcrip
     }
   }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Scroll to bottom when becoming visible after tab switch (if user was following)
+  useEffect(() => {
+    if (prevHiddenRef.current && !hidden) {
+      const el = containerRef.current;
+      if (el && !isScrolledUp) {
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+    prevHiddenRef.current = hidden;
+  }, [hidden, isScrolledUp]);
+
   const jumpToLatest = useCallback(() => {
     const el = containerRef.current;
     if (el) {
@@ -465,13 +478,15 @@ export function TranscriptView({ sessionId, session, queuedMessages }: Transcrip
     }
   }, []);
 
+  const paired = entries.length > 0 ? pairEntries(entries) : [];
+
   if (error) {
-    return <div className="transcript-error">Failed to load transcript: {error}</div>;
+    return <div className="transcript-error" style={hidden ? { display: 'none' } : undefined}>Failed to load transcript: {error}</div>;
   }
 
   if (loading) {
     return (
-      <div className="transcript-skeleton">
+      <div className="transcript-skeleton" style={hidden ? { display: 'none' } : undefined}>
         <div className="transcript-skeleton-bar" />
         <div className="transcript-skeleton-bar" />
         <div className="transcript-skeleton-bar" />
@@ -479,14 +494,13 @@ export function TranscriptView({ sessionId, session, queuedMessages }: Transcrip
     );
   }
 
-  const paired = entries.length > 0 ? pairEntries(entries) : [];
-
   return (
     <>
       <div
         className="transcript-view"
         ref={containerRef}
         onScroll={handleScroll}
+        style={hidden ? { display: 'none' } : undefined}
       >
         {loadingOlder && (
           <div className="transcript-top-loader">
@@ -512,7 +526,7 @@ export function TranscriptView({ sessionId, session, queuedMessages }: Transcrip
         {session && <LiveStatus session={session} entries={entries} hasQueuedInput={visibleQueued.length > 0} turnComplete={turnComplete} />}
       </div>
 
-      {isScrolledUp && (
+      {isScrolledUp && !hidden && (
         <button className="transcript-jump" onClick={jumpToLatest}>
           {'\u2193'} Jump to latest
         </button>

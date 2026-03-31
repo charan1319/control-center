@@ -146,15 +146,15 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
         )}
       </div>
 
-      {/* Content */}
+      {/* Content — TranscriptView stays mounted (hidden when terminal active)
+           to preserve entries, scroll position, and WS subscription across tab switches */}
       <div className="sd-content">
-        {activeTab === 'transcript' && (
-          <TranscriptView
-            sessionId={session.session_id}
-            session={session}
-            queuedMessages={queuedMessages}
-          />
-        )}
+        <TranscriptView
+          sessionId={session.session_id}
+          session={session}
+          queuedMessages={queuedMessages}
+          hidden={activeTab !== 'transcript'}
+        />
         {activeTab === 'terminal' && hasTmux && (
           <TerminalView
             sessionId={session.session_id}
