@@ -163,6 +163,9 @@ export function isCodexFormat(parsedLines) {
  */
 export function parseCodexEntries(parsedLines) {
   const entries = [];
+  // Track user messages from event_msg to deduplicate against response_item user context
+  const seenUserContent = new Set();
+
   for (const obj of parsedLines) {
     const timestamp = obj.timestamp || undefined;
     const payload = obj.payload;
@@ -170,6 +173,7 @@ export function parseCodexEntries(parsedLines) {
 
     if (obj.type === 'event_msg') {
       if (payload.type === 'user_message' && payload.message) {
+        seenUserContent.add(payload.message.trim().slice(0, 200));
         entries.push({ type: 'user', content: payload.message, timestamp });
       }
       // agent_message is a duplicate of response_item message — skip to avoid doubling
@@ -188,14 +192,16 @@ export function parseCodexEntries(parsedLines) {
           }
         }
       } else if (subtype === 'message' && payload.role === 'user') {
-        // User context messages (input_text blocks) — usually the initial prompt
+        // User context messages (input_text blocks) — usually the initial prompt.
+        // Skip if already seen via event_msg user_message (avoids duplicate display).
         const content = payload.content;
         if (Array.isArray(content)) {
           const text = content
             .filter(c => c.type === 'input_text' || c.type === 'text')
             .map(c => c.text || '')
             .join('\n');
-          if (text) {
+          if (text && !seenUserContent.has(text.trim().slice(0, 200))) {
+            seenUserContent.add(text.trim().slice(0, 200));
             entries.push({ type: 'user', content: text, timestamp });
           }
         }

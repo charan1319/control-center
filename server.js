@@ -1473,13 +1473,12 @@ export async function buildServer(opts = {}) {
       }
 
       if (session.cli_type === 'codex') {
-        // Codex's Rust TUI uses the kitty keyboard protocol, which tmux's send-keys
-        // doesn't generate correctly. Write directly to the PTY bridge (same path as
-        // the terminal WebSocket) so tmux's client mode translates the keys properly.
-        if (!ptyManager.writeInput(target, text + '\r')) {
-          // Fallback if no PTY bridge exists — try send-keys
-          execFileSync('tmux', ['send-keys', '-t', target, '-l', text + '\r'], { timeout: 10_000 });
-        }
+        // Codex's Rust TUI needs text typed via send-keys -l (not paste-buffer, which
+        // uses bracketed paste sequences that Codex ignores). A delay between text and
+        // Enter lets the TUI finish processing input before submission.
+        execFileSync('tmux', ['send-keys', '-t', target, '-l', text], { timeout: 10_000 });
+        await new Promise(resolve => setTimeout(resolve, 200));
+        execFileSync('tmux', ['send-keys', '-t', target, 'Enter'], { timeout: 10_000 });
       } else {
         // Claude/Gemini: use load-buffer + paste-buffer (handles large text, preserves newlines).
         // Unique named buffer avoids race conditions between concurrent requests.

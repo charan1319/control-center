@@ -51,7 +51,10 @@ export function SessionDetail({ session, onClose }: SessionDetailProps) {
   const handleSendMessage = useCallback(async (text: string) => {
     const id = nextQueueId.current++;
     setQueuedMessages(prev => [...prev, { id, text, sent: false }]);
-    setTimeout(() => setQueuedMessages(prev => prev.filter(m => m.id !== id)), 60000);
+    // Cleanup timer: 10 min. Codex writes transcript entries in bulk at the end of a
+    // turn, so the queued message must stay visible until the transcript catches up.
+    // The visibleQueued filter in TranscriptView hides it as soon as a match appears.
+    setTimeout(() => setQueuedMessages(prev => prev.filter(m => m.id !== id)), 600_000);
     try {
       await api.sendInput(session.session_id, text);
       setQueuedMessages(prev => prev.map(m => m.id === id ? { ...m, sent: true } : m));

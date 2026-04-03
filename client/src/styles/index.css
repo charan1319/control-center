@@ -93,6 +93,21 @@ input, textarea, select {
   background: var(--ctp-surface2);
 }
 
+/* Force portrait on mobile: rotate content back when phone is held landscape.
+   orientation.lock() only works for installed PWAs — this CSS handles browsers. */
+@media (max-width: 900px) and (orientation: landscape) {
+  html {
+    transform: rotate(-90deg);
+    transform-origin: left top;
+    width: 100vh;
+    height: 100vw;
+    overflow-x: hidden;
+    position: absolute;
+    top: 100%;
+    left: 0;
+  }
+}
+
 /* PWA standalone: avoid content being hidden behind notches/home indicator */
 @supports (padding: env(safe-area-inset-top)) {
   .header { padding-top: max(8px, env(safe-area-inset-top)); }
