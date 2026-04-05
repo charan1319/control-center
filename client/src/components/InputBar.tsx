@@ -147,6 +147,7 @@ export function InputBar({ sessionId, mode, terminalWs, onSendMessage }: InputBa
 
   // Quick action handlers
   const handleCtrlC = useCallback(() => sendRaw('\x03'), [sendRaw]);
+  const handleCtrlB = useCallback(() => sendRaw('\x02\x02'), [sendRaw]);
   const handleTab = useCallback(() => sendRaw('\t'), [sendRaw]);
   const handleUp = useCallback(() => sendRaw('\x1b[A'), [sendRaw]);
   const handleDown = useCallback(() => sendRaw('\x1b[B'), [sendRaw]);
@@ -160,7 +161,8 @@ export function InputBar({ sessionId, mode, terminalWs, onSendMessage }: InputBa
   return (
     <>
       <div className="input-bar-quick">
-        <button onClick={handleCtrlC} title="Send Ctrl+C">Ctrl+C</button>
+        <button onClick={handleCtrlC} title="Send Ctrl+C (interrupt)">Ctrl+C</button>
+        <button onClick={handleCtrlB} title="Send Ctrl+B (tmux prefix)">Ctrl+B</button>
         <button onClick={handleTab} title="Send Tab">Tab</button>
         <button onClick={handleUp} title="Arrow Up">{'\u2191'}</button>
         <button onClick={handleDown} title="Arrow Down">{'\u2193'}</button>
