@@ -72,7 +72,25 @@ export function useTranscript(sessionId: string | null) {
     const updates = getTranscriptUpdates(sessionId);
     if (updates.length > 0) {
       const newEntries = updates.flat();
-      setEntries(prev => [...prev, ...newEntries]);
+      setEntries(prev => {
+        // Deduplicate user entries: Codex writes user_message via event_msg AND
+        // response_item in separate file writes, so the watcher parses them in
+        // different chunks with separate dedup Sets. Filter out new user entries
+        // that match a recent existing user entry.
+        const deduped = newEntries.filter(ne => {
+          if (ne.type !== 'user') return true;
+          const needle = typeof ne.content === 'string' ? ne.content.trim().slice(0, 200) : '';
+          if (!needle) return true;
+          for (let i = prev.length - 1; i >= Math.max(0, prev.length - 10); i--) {
+            if (prev[i].type === 'user') {
+              const existing = typeof prev[i].content === 'string' ? prev[i].content.trim().slice(0, 200) : '';
+              if (existing === needle) return false;
+            }
+          }
+          return true;
+        });
+        return deduped.length > 0 ? [...prev, ...deduped] : prev;
+      });
     }
 
     // Server sends authoritative turnComplete with each transcript_update

@@ -27,6 +27,10 @@ const dashboardClients = new Set();
 // Transcript file watchers: session_id → { watcher, subscribers: Set<socket>, lastSize, filePath }
 const transcriptWatchers = new Map();
 
+// Pending transcript subscriptions for sessions whose transcript path isn't known yet (e.g. Codex)
+// session_id → Set<socket>
+const pendingTranscriptSubs = new Map();
+
 // Idempotency for session-end handling (only process each session once per server lifetime)
 const SERVER_START = new Date().toISOString();
 const sessionsEnded = new Set();
@@ -438,6 +442,11 @@ export async function buildServer(opts = {}) {
       dashboardClients.delete(socket);
       for (const sid of subscribedSessions) unsubscribeTranscript(socket, sid);
       subscribedSessions.clear();
+      // Clean up any pending transcript subscriptions for this socket
+      for (const [sid, sockets] of pendingTranscriptSubs) {
+        sockets.delete(socket);
+        if (sockets.size === 0) pendingTranscriptSubs.delete(sid);
+      }
     };
     socket.on('close', cleanup);
     socket.on('error', cleanup);
@@ -646,12 +655,28 @@ export async function buildServer(opts = {}) {
                 }
               }, (perm) => {
                 if (perm.waiting) {
-                  db.updateStatus(sessionId, 'waiting_permission');
-                  db.setPendingPermission(sessionId, perm.tool_name || null, perm.tool_input || null);
-                  const updated = db.getSession(sessionId);
-                  if (updated) {
-                    broadcastSessionUpdate(updated);
-                    broadcastEvent({ session_id: sessionId, event: 'PermissionRequest', tool_name: perm.tool_name });
+                  const sess = db.getSession(sessionId);
+                  const willAutoApprove = shouldAutoApprove(
+                    { tool_name: perm.tool_name, tool_input: perm.tool_input, cli_type: 'codex' },
+                    sess
+                  );
+                  if (willAutoApprove && sess?.tmux_target && /^[a-zA-Z0-9_-]+$/.test(sess.tmux_target)) {
+                    // Auto-approve: send Enter to the Codex TUI permission prompt after a short delay
+                    const target = sess.tmux_target;
+                    setTimeout(() => {
+                      try {
+                        execFileSync('tmux', ['send-keys', '-t', target, 'Enter'], { timeout: 5_000 });
+                      } catch { /* tmux pane may be gone */ }
+                    }, 800);
+                    // Don't set waiting_permission — it was auto-approved
+                  } else if (!willAutoApprove) {
+                    db.updateStatus(sessionId, 'waiting_permission');
+                    db.setPendingPermission(sessionId, perm.tool_name || null, perm.tool_input || null);
+                    const updated = db.getSession(sessionId);
+                    if (updated) {
+                      broadcastSessionUpdate(updated);
+                      broadcastEvent({ session_id: sessionId, event: 'PermissionRequest', tool_name: perm.tool_name });
+                    }
                   }
                 } else {
                   // Escalation resolved (approved or denied in TUI)
@@ -665,6 +690,14 @@ export async function buildServer(opts = {}) {
               });
               const updated = db.getSession(sessionId);
               if (updated) broadcastSessionUpdate(updated);
+              // Fulfill any pending transcript subscriptions now that path is known
+              const pending = pendingTranscriptSubs.get(sessionId);
+              if (pending) {
+                for (const sock of pending) {
+                  if (sock.readyState === 1) subscribeTranscript(sock, sessionId);
+                }
+                pendingTranscriptSubs.delete(sessionId);
+              }
               clearInterval(poll);
               return;
             }
@@ -681,7 +714,12 @@ export async function buildServer(opts = {}) {
   function subscribeTranscript(socket, sessionId) {
     if (!sessionId) return;
     const session = db.getSession(sessionId);
-    if (!session?.transcript) return;
+    if (!session?.transcript) {
+      // Transcript not yet known (e.g. Codex discovery in progress) — queue for later
+      if (!pendingTranscriptSubs.has(sessionId)) pendingTranscriptSubs.set(sessionId, new Set());
+      pendingTranscriptSubs.get(sessionId).add(socket);
+      return;
+    }
 
     let entry = transcriptWatchers.get(sessionId);
     if (entry) {
@@ -719,7 +757,15 @@ export async function buildServer(opts = {}) {
           try {
             const buf = Buffer.allocUnsafe(newBytes);
             readSync(fd, buf, 0, newBytes, w.lastSize);
-            const lines = buf.toString('utf8').split('\n');
+
+            // Only process up to the last newline to avoid splitting a line mid-write.
+            // If no newline exists yet, wait for the next poll when more bytes arrive.
+            let lastNl = newBytes - 1;
+            while (lastNl >= 0 && buf[lastNl] !== 0x0A) lastNl--;
+            if (lastNl < 0) { closeSync(fd); return; }
+
+            const usableBytes = lastNl + 1;
+            const lines = buf.toString('utf8', 0, usableBytes).split('\n');
             const entries = parseTranscriptLines(lines, false);
 
             // Extract context usage from raw lines (needs full JSONL objects, not parsed entries)
@@ -746,10 +792,11 @@ export async function buildServer(opts = {}) {
                 try { if (sub.readyState === 1) sub.send(msg); } catch { /* gone */ }
               }
             }
+
+            // Only advance past complete lines
+            w.lastSize += usableBytes;
           } finally { closeSync(fd); }
         } catch { /* read error */ }
-
-        w.lastSize = currentSize;
       });
     } catch { /* watch failed — file may not exist */ }
 
@@ -1052,6 +1099,15 @@ export async function buildServer(opts = {}) {
           }
           pendingLabels.delete(match.name);
         }
+      }
+
+      // Fulfill pending transcript subscriptions now that path is known
+      const pendingSubs = pendingTranscriptSubs.get(session_id);
+      if (pendingSubs && payload.transcript_path) {
+        for (const sock of pendingSubs) {
+          if (sock.readyState === 1) subscribeTranscript(sock, session_id);
+        }
+        pendingTranscriptSubs.delete(session_id);
       }
 
       // Capture initial snapshot (fire and forget — don't block hook response)
