@@ -9,6 +9,30 @@ const activePTYs = new Map();
 const TMUX_TIMEOUT_MS = 10_000;
 
 /**
+ * Trim a scrollback buffer from the left without cutting inside an ANSI escape
+ * sequence. ESC (0x1b) always begins a new sequence, so advancing the cut point
+ * forward to the next ESC guarantees the replay starts at a safe boundary.
+ *
+ * Codex's Rust TUI emits dense SGR/CSI/alt-screen streams, so the buffer rolls
+ * over frequently and a naive left-slice was clipping escape sequences — leaving
+ * orphan parameter bytes that xterm.js rendered as garbage, or worse, clipping
+ * the alt-screen enter (ESC[?1049h) so subsequent frame draws landed in the
+ * wrong buffer on replay.
+ */
+function trimScrollback(buffer, maxSize) {
+  if (buffer.length <= maxSize) return buffer;
+  const start = buffer.length - maxSize;
+  // Search a small window after the cut for the next ESC — ANSI sequences are
+  // typically <32 bytes, so 256 bytes is plenty to step past any clipped one.
+  const windowEnd = Math.min(buffer.length, start + 256);
+  for (let i = start; i < windowEnd; i++) {
+    if (buffer.charCodeAt(i) === 0x1b) return buffer.slice(i);
+  }
+  // No ESC in the window — the cut is in plain text, safe to slice as-is.
+  return buffer.slice(start);
+}
+
+/**
  * Validate and sanitize a tmux target name.
  * Rejects anything outside [a-zA-Z0-9_-] to prevent shell injection.
  */
@@ -72,7 +96,7 @@ function ensureBridge(tmuxTarget) {
   };
 
   ptyProcess.onData((data) => {
-    entry.scrollback = (entry.scrollback + data).slice(-config.scrollbackBufferSize);
+    entry.scrollback = trimScrollback(entry.scrollback + data, config.scrollbackBufferSize);
     const msg = JSON.stringify({ type: 'output', data });
     for (const client of entry.clients) {
       try {
